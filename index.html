@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Metaball Gradient Background (WebGL)</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <!-- Background layer (non-interactive) -->
+    <div id="bg" aria-hidden="true">
+      <canvas id="glCanvas"></canvas>
+    </div>
+
+    <!-- Floating control panel (for testing/tuning) -->
+    <aside class="panel" id="panel" aria-label="Background controls">
+      <div class="panel__header">
+        <div class="panel__title">Background</div>
+        <button class="panel__toggle" id="panelToggle" type="button" aria-expanded="true">
+          Hide
+        </button>
+      </div>
+
+      <div class="panel__body" id="panelBody">
+        <div class="control">
+          <label class="control__label" for="blobCount">Metaballs</label>
+          <div class="control__row">
+            <input id="blobCount" type="range" min="1" max="8" step="1" />
+            <output class="control__value" id="blobCountValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="grain">Grain</label>
+          <div class="control__row">
+            <input id="grain" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="grainValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="distAmount">Blob Distortion</label>
+          <div class="control__row">
+            <input id="distAmount" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="distAmountValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="distScale">Distortion Scale</label>
+          <div class="control__row">
+            <input id="distScale" type="range" min="0.25" max="4" step="0.01" />
+            <output class="control__value" id="distScaleValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="distSpeed">Distortion Speed</label>
+          <div class="control__row">
+            <input id="distSpeed" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="distSpeedValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="globalSoftness">Global Softness</label>
+          <div class="control__row">
+            <input id="globalSoftness" type="range" min="0.4" max="1.8" step="0.01" />
+            <output class="control__value" id="globalSoftnessValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="softVar">Softness Variation</label>
+          <div class="control__row">
+            <input id="softVar" type="range" min="0" max="0.6" step="0.01" />
+            <output class="control__value" id="softVarValue"></output>
+          </div>
+        </div>
+
+        <div class="panel__divider"></div>
+
+        <!-- Background color (same interaction pattern as blobs: color input + swatches) -->
+        <div class="blob blob--bg">
+          <div class="blob__head">
+            <div class="blob__label">Background</div>
+            <input id="bgColor" type="color" value="#0B0712" />
+          </div>
+          <div class="swatches" id="bgSwatches" aria-label="Background swatches"></div>
+        </div>
+
+        <div class="panel__divider"></div>
+
+        <div class="blobControls" id="blobControls"></div>
+
+        <div class="panel__divider"></div>
+
+        <div class="saved" id="saved">
+          <div class="saved__head">
+            <div class="saved__title">Saved versions</div>
+            <button class="btn" id="saveVersion" type="button">Save</button>
+          </div>
+          <div class="saved__list" id="savedList"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Embed panel (top-right, separate from the menu) -->
+    <aside class="panel panel--right" id="embedPanel" aria-label="Embed code">
+      <div class="panel__body">
+        <div class="export" id="export">
+          <button class="export__toggle" id="embedToggle" type="button" aria-expanded="false">
+            <span>Embed code</span>
+            <span class="export__chev" aria-hidden="true"></span>
+          </button>
+          <div class="export__body" id="exportBody" hidden>
+            <div class="export__actions">
+              <button class="btn" id="copyEmbed" type="button">Copy HTML</button>
+            </div>
+            <textarea
+              id="embedCode"
+              class="export__code"
+              rows="10"
+              readonly
+              spellcheck="false"
+            ></textarea>
+            <div class="export__hint">Paste into your page and adjust file paths.</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
+
