@@ -682,22 +682,110 @@ function main() {
   }
 
   function buildEmbedSnippet() {
+    // VEV-ready: one container div + one <style> + one <script>, fully inline, no file paths.
     const cfg = JSON.stringify(serializeConfig(), null, 2);
-    return `<!-- Metaball gradient background -->
-<div id="bg" aria-hidden="true">
-  <canvas id="glCanvas"></canvas>
-</div>
-
-<style>
-  #bg{position:fixed;inset:0;z-index:0;pointer-events:none;}
-  #glCanvas{width:100%;height:100%;display:block;}
-</style>
-
-<script>
-  window.METABALL_BG_CONFIG = ${cfg};
-</script>
-<script src="YOUR_PATH/script.js"></script>
-`;
+    return (
+      `<div id="metaball-gradient"></div>\n\n` +
+      `<style>\n` +
+      `  #metaball-gradient{position:relative;width:100%;height:100%;min-height:240px;overflow:hidden;background:#0b0712;isolation:isolate;}\n` +
+      `  #metaball-gradient canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
+      `  #metaball-gradient .mbg-panel{position:absolute;top:12px;left:12px;z-index:2;width:min(300px,calc(100% - 24px));border-radius:14px;border:1px solid rgba(255,255,255,.16);background:linear-gradient(180deg,rgba(255,255,255,.10),rgba(14,10,22,.52));box-shadow:0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);color:rgba(255,255,255,.92);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";pointer-events:auto;user-select:none;}\n` +
+      `  #metaball-gradient .mbg-panel__header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.10);}\n` +
+      `  #metaball-gradient .mbg-title{font-size:.95rem;font-weight:650;letter-spacing:.01em;}\n` +
+      `  #metaball-gradient .mbg-btn{appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:rgba(255,255,255,.90);border-radius:10px;padding:6px 10px;font-size:.85rem;cursor:pointer;}\n` +
+      `  #metaball-gradient .mbg-btn:hover{background:rgba(255,255,255,.10);}\n` +
+      `  #metaball-gradient .mbg-panel__body{padding:12px;max-height:calc(100% - 54px);overflow:auto;}\n` +
+      `  #metaball-gradient .mbg-panel.is-collapsed .mbg-panel__body{display:none;}\n` +
+      `  #metaball-gradient .mbg-control{margin:10px 0;}\n` +
+      `  #metaball-gradient .mbg-label{display:block;font-size:.82rem;color:rgba(255,255,255,.78);margin-bottom:6px;}\n` +
+      `  #metaball-gradient .mbg-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;}\n` +
+      `  #metaball-gradient .mbg-value{min-width:48px;text-align:right;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.80);font-size:.82rem;}\n` +
+      `  #metaball-gradient input[type="range"]{width:100%;-webkit-appearance:none;appearance:none;height:12px;border-radius:999px;background:rgba(255,255,255,.10);outline:none;}\n` +
+      `  #metaball-gradient input[type="range"]::-webkit-slider-runnable-track{height:12px;border-radius:999px;background:rgba(255,255,255,.10);}\n` +
+      `  #metaball-gradient input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-3px;border-radius:999px;background:#8b1d82;border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 16px rgba(0,0,0,.35);}\n` +
+      `  #metaball-gradient input[type="range"]::-moz-range-track{height:12px;border-radius:999px;background:rgba(255,255,255,.10);border:none;}\n` +
+      `  #metaball-gradient input[type="range"]::-moz-range-thumb{width:18px;height:18px;border-radius:999px;background:#8b1d82;border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 16px rgba(0,0,0,.35);}\n` +
+      `  #metaball-gradient .mbg-divider{height:1px;margin:12px 0;background:rgba(255,255,255,.10);}\n` +
+      `  #metaball-gradient .mbg-blobs{display:grid;gap:12px;}\n` +
+      `  #metaball-gradient .mbg-blob{border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px;background:rgba(255,255,255,.03);}\n` +
+      `  #metaball-gradient .mbg-blob__head{display:flex;align-items:center;justify-content:space-between;gap:10px;}\n` +
+      `  #metaball-gradient .mbg-blob__label{font-size:.88rem;color:rgba(255,255,255,.88);font-weight:600;}\n` +
+      `  #metaball-gradient .mbg-blob input[type="color"]{width:44px;height:28px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);padding:0;}\n` +
+      `  #metaball-gradient .mbg-swatches{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}\n` +
+      `  #metaball-gradient .mbg-swatch{width:18px;height:18px;border-radius:999px;border:1px solid rgba(255,255,255,.18);cursor:pointer;padding:0;background:transparent;}\n` +
+      `  #metaball-gradient .mbg-swatch:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(255,255,255,.18);}\n` +
+      `  #metaball-gradient .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
+      `</style>\n\n` +
+      `<script>\n` +
+      `(function(){\n` +
+      `  "use strict";\n` +
+      `  var PRESET=${cfg};\n` +
+      `  function clamp(x,a,b){return Math.max(a,Math.min(b,x));}\n` +
+      `  function hexToRgb01(hex){var h=String(hex||"").replace("#","").trim();if(h.length!==6)return[0,0,0];return[parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}\n` +
+      `  function rand01(i,salt){var x=Math.sin((i+1)*127.1+salt*311.7)*43758.5453123;return x-Math.floor(x);}\n` +
+      `  var MAX_BLOBS=8;\n` +
+      `  var SWATCHES=${JSON.stringify(SWATCHES)};\n` +
+      `  var DEFAULT_3=${JSON.stringify(DEFAULT_3)};\n` +
+      `  function pickDefaultColor(i){return i<DEFAULT_3.length?DEFAULT_3[i]:SWATCHES[i%SWATCHES.length];}\n` +
+      `  function createBlob(i){return{color:pickDefaultColor(i),baseX:0.25+rand01(i,1.1)*0.5,baseY:0.25+rand01(i,2.2)*0.5,moveAmpX:0.08+rand01(i,3.3)*0.14,moveAmpY:0.08+rand01(i,4.4)*0.14,moveFreqX:0.03+rand01(i,5.5)*0.06,moveFreqY:0.03+rand01(i,6.6)*0.06,radius:0.16+rand01(i,7.7)*0.18,pulseAmp:0.03+rand01(i,8.8)*0.06,pulseFreq:0.08+rand01(i,9.9)*0.18,phase:rand01(i,10.1)*Math.PI*2,softnessSeed:rand01(i,11.2)*2-1,distortionSeed:rand01(i,12.3)};}\n` +
+      `  function init(root){\n` +
+      `    if(!root) return;\n` +
+      `    root.innerHTML="";\n` +
+      `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
+      `    var panel=document.createElement("div");panel.className="mbg-panel";\n` +
+      `    panel.innerHTML='<div class="mbg-panel__header"><div class="mbg-title">Metaballs</div><button class="mbg-btn" type="button" data-action="toggle">Hide</button></div><div class="mbg-panel__body"><div class="mbg-control"><label class="mbg-label" for="mbg-count">Metaball Count</label><div class="mbg-row"><input id="mbg-count" type="range" min="1" max="8" step="1" /><output class="mbg-value" id="mbg-count-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-grain">Grain Intensity</label><div class="mbg-row"><input id="mbg-grain" type="range" min="0" max="1" step="0.01" /><output class="mbg-value" id="mbg-grain-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-dist">Blob Distortion</label><div class="mbg-row"><input id="mbg-dist" type="range" min="0" max="1" step="0.01" /><output class="mbg-value" id="mbg-dist-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-dscale">Distortion Scale</label><div class="mbg-row"><input id="mbg-dscale" type="range" min="0.25" max="4" step="0.01" /><output class="mbg-value" id="mbg-dscale-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-soft">Global Softness</label><div class="mbg-row"><input id="mbg-soft" type="range" min="0.4" max="1.8" step="0.01" /><output class="mbg-value" id="mbg-soft-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-svar">Softness Variation</label><div class="mbg-row"><input id="mbg-svar" type="range" min="0" max="0.6" step="0.01" /><output class="mbg-value" id="mbg-svar-v"></output></div></div><div class="mbg-divider"></div><div class="mbg-blobs" id="mbg-blobs"></div></div>';\n` +
+      `    root.appendChild(panel);\n` +
+      `    function $(id){return root.querySelector(id);}\n` +
+      `    var renderScale=0.65, dprCap=1.5;\n` +
+      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,globalSoftness:1.02,softVar:0.12};\n` +
+      `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
+      `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
+      `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
+      `    if(PRESET && Array.isArray(PRESET.blobs)){for(var bi=0;bi<Math.min(state.blobCount,PRESET.blobs.length);bi++){var pb=PRESET.blobs[bi];if(pb){for(var kk in pb){if(typeof pb[kk]==="number") blobs[bi][kk]=pb[kk];}if(typeof pb.color==="string") blobs[bi].color=pb.color;}}}\n` +
+      `    if(PRESET && PRESET.colors && Array.isArray(PRESET.colors.blobs)){for(var ci=0;ci<Math.min(state.blobCount,PRESET.colors.blobs.length);ci++){if(typeof PRESET.colors.blobs[ci]==="string") blobs[ci].color=PRESET.colors.blobs[ci];}}\n` +
+      `    var gl=canvas.getContext("webgl",{antialias:false,depth:false,stencil:false,premultipliedAlpha:false,preserveDrawingBuffer:false,powerPreference:"low-power"});\n` +
+      `    if(!gl){var fb=document.createElement("div");fb.className="mbg-fallback";fb.textContent="WebGL is not supported in this browser/environment.";root.appendChild(fb);return;}\n` +
+      `    function compile(type,src){var sh=gl.createShader(type);gl.shaderSource(sh,src);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){var info=gl.getShaderInfoLog(sh)||"Shader compile error.";gl.deleteShader(sh);throw new Error(info);}return sh;}\n` +
+      `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
+      `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
+      `    function fragSrc(prec){return prec+'\\n'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform float u_time;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
+      `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
+      `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
+      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*0.12;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=vec3(0.06,0.04,0.10);vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
+      `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
+      `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
+      `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uTime=gl.getUniformLocation(prog,'u_time');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
+      `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
+      `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
+      `    var lastW=0,lastH=0;function resize(rect){var cssW=Math.max(1,Math.floor(rect&&rect.width?rect.width:root.clientWidth));var cssH=Math.max(1,Math.floor(rect&&rect.height?rect.height:root.clientHeight));var dpr=Math.min(dprCap,window.devicePixelRatio||1);var w=Math.max(2,Math.floor(cssW*dpr*renderScale));var h=Math.max(2,Math.floor(cssH*dpr*renderScale));if(w===lastW&&h===lastH)return;lastW=w;lastH=h;canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);gl.uniform2f(uRes,w,h);} \n` +
+      `    if(typeof ResizeObserver!=='undefined'){var ro=new ResizeObserver(function(es){if(!es||!es.length)return;resize(es[es.length-1].contentRect);});ro.observe(root);}else{window.addEventListener('resize',function(){resize({width:root.clientWidth,height:root.clientHeight});});}\n` +
+      `    var btn=panel.querySelector('[data-action="toggle"]');btn.addEventListener('click',function(){var c=panel.classList.toggle('is-collapsed');btn.textContent=c?'Show':'Hide';});\n` +
+      `    function bindRange(id,outId,key,fmt){var el=$(id),out=$(outId);if(!el||!out)return;el.value=String(state[key]);out.value=fmt?fmt(state[key]):String(state[key]);el.addEventListener('input',function(){var v=parseFloat(el.value);state[key]=v;out.value=fmt?fmt(v):String(v);});}\n` +
+      `    function bindInt(id,outId,key){var el=$(id),out=$(outId);if(!el||!out)return;el.value=String(state[key]);out.value=String(state[key]);el.addEventListener('input',function(){var v=parseInt(el.value,10);state[key]=v;out.value=String(v);rebuild();});}\n` +
+      `    bindInt('#mbg-count','#mbg-count-v','blobCount');bindRange('#mbg-grain','#mbg-grain-v','grain',function(v){return v.toFixed(2);});bindRange('#mbg-dist','#mbg-dist-v','distAmount',function(v){return v.toFixed(2);});bindRange('#mbg-dscale','#mbg-dscale-v','distScale',function(v){return v.toFixed(2);});bindRange('#mbg-soft','#mbg-soft-v','globalSoftness',function(v){return v.toFixed(2);});bindRange('#mbg-svar','#mbg-svar-v','softVar',function(v){return v.toFixed(2);});\n` +
+      `    var blobsEl=$('#mbg-blobs');\n` +
+      `    function buildSwatches(container,onPick){container.textContent='';for(var si=0;si<SWATCHES.length;si++){(function(hex){var b=document.createElement('button');b.type='button';b.className='mbg-swatch';b.style.background=hex;b.title=hex;b.addEventListener('click',function(){onPick(hex);});container.appendChild(b);})(SWATCHES[si]);}}\n` +
+      `    function setBlobColor(i,hex){blobs[i].color=hex;var rgb=hexToRgb01(hex);blobColor[i*3]=rgb[0];blobColor[i*3+1]=rgb[1];blobColor[i*3+2]=rgb[2];gl.uniform3fv(uCol,blobColor);} \n` +
+      `    function ensure(n){for(var i=0;i<n;i++){if(!blobs[i].color)blobs[i].color=pickDefaultColor(i);}}\n` +
+      `    function rebuild(){if(!blobsEl)return;var n=clamp(state.blobCount|0,1,MAX_BLOBS);state.blobCount=n;ensure(n);blobsEl.textContent='';for(var i=0;i<n;i++){(function(idx){var wrap=document.createElement('div');wrap.className='mbg-blob';var head=document.createElement('div');head.className='mbg-blob__head';var label=document.createElement('div');label.className='mbg-blob__label';label.textContent='Blob '+(idx+1);var color=document.createElement('input');color.type='color';color.value=blobs[idx].color;color.addEventListener('input',function(){setBlobColor(idx,color.value);});head.appendChild(label);head.appendChild(color);var sw=document.createElement('div');sw.className='mbg-swatches';buildSwatches(sw,function(hex){color.value=hex;setBlobColor(idx,hex);});wrap.appendChild(head);wrap.appendChild(sw);blobsEl.appendChild(wrap);})(i);} }\n` +
+      `    rebuild();\n` +
+      `    gl.disable(gl.DEPTH_TEST);gl.disable(gl.BLEND);\n` +
+      `    var running=true,raf=0,t0=performance.now();\n` +
+      `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
+      `    function start(){if(running)return;running=true;raf=requestAnimationFrame(frame);} \n` +
+      `    document.addEventListener('visibilitychange',function(){if(document.hidden)stop();else start();});\n` +
+      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize({width:root.clientWidth,height:root.clientHeight});var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
+      `    raf=requestAnimationFrame(frame);\n` +
+      `  }\n` +
+      `  var nodes=document.querySelectorAll('#metaball-gradient');\n` +
+      `  for(var i=0;i<nodes.length;i++){init(nodes[i]);}\n` +
+      `})();\n` +
+      `</script>\n`
+    );
   }
 
   function updateEmbedCode() {
