@@ -692,7 +692,9 @@ function main() {
     return (
       `<div id="${instanceId}"></div>\n\n` +
       `<style>\n` +
-      `  #${instanceId}{position:relative;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      // VEV note: height:100% is not always resolvable inside embed wrappers.
+      // The script will actively size this root to its parent block.
+      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:0;overflow:hidden;background:${bg};isolation:isolate;}\n` +
       `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
       `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
@@ -739,15 +741,46 @@ function main() {
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
-      `    var lastW=0,lastH=0;function resize(rect){var cssW=Math.max(1,Math.floor(rect&&rect.width?rect.width:root.clientWidth));var cssH=Math.max(1,Math.floor(rect&&rect.height?rect.height:root.clientHeight));var dpr=Math.min(dprCap,window.devicePixelRatio||1);var w=Math.max(2,Math.floor(cssW*dpr*renderScale));var h=Math.max(2,Math.floor(cssH*dpr*renderScale));if(w===lastW&&h===lastH)return;lastW=w;lastH=h;canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);gl.uniform2f(uRes,w,h);} \n` +
-      `    if(typeof ResizeObserver!=='undefined'){var ro=new ResizeObserver(function(es){if(!es||!es.length)return;resize(es[es.length-1].contentRect);});ro.observe(root);}else{window.addEventListener('resize',function(){resize({width:root.clientWidth,height:root.clientHeight});});}\n` +
+      `    var host=root.parentElement||root;\n` +
+      `    var hostW=0,hostH=0;\n` +
+      `    function syncRootToHost(){\n` +
+      `      if(!host) return;\n` +
+      `      var r=host.getBoundingClientRect();\n` +
+      `      // If host has a real height (VEV block), hard-set the root size to match.\n` +
+      `      // If not, fall back to a sensible minimum so the canvas is visible.\n` +
+      `      var w=Math.max(1,Math.floor(r.width||0));\n` +
+      `      var h=Math.max(1,Math.floor(r.height||0));\n` +
+      `      if(h<2) h=240;\n` +
+      `      hostW=w;hostH=h;\n` +
+      `      root.style.width=w+'px';\n` +
+      `      root.style.height=h+'px';\n` +
+      `    }\n` +
+      `    var lastW=0,lastH=0;function resize(){\n` +
+      `      var cssW=Math.max(1,hostW||root.clientWidth||1);\n` +
+      `      var cssH=Math.max(1,hostH||root.clientHeight||1);\n` +
+      `      var dpr=Math.min(dprCap,window.devicePixelRatio||1);\n` +
+      `      var w=Math.max(2,Math.floor(cssW*dpr*renderScale));\n` +
+      `      var h=Math.max(2,Math.floor(cssH*dpr*renderScale));\n` +
+      `      if(w===lastW&&h===lastH)return;\n` +
+      `      lastW=w;lastH=h;\n` +
+      `      canvas.width=w;canvas.height=h;\n` +
+      `      gl.viewport(0,0,w,h);\n` +
+      `      gl.uniform2f(uRes,w,h);\n` +
+      `    }\n` +
+      `    syncRootToHost();resize();\n` +
+      `    if(typeof ResizeObserver!=='undefined'){\n` +
+      `      var ro=new ResizeObserver(function(){syncRootToHost();resize();});\n` +
+      `      ro.observe(host);\n` +
+      `    }else{\n` +
+      `      window.addEventListener('resize',function(){syncRootToHost();resize();});\n` +
+      `    }\n` +
       `` +
       `    gl.disable(gl.DEPTH_TEST);gl.disable(gl.BLEND);\n` +
       `    var running=true,raf=0,t0=performance.now();\n` +
       `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
       `    function start(){if(running)return;running=true;raf=requestAnimationFrame(frame);} \n` +
       `    document.addEventListener('visibilitychange',function(){if(document.hidden)stop();else start();});\n` +
-      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize({width:root.clientWidth,height:root.clientHeight});var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
+      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
