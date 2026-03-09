@@ -683,37 +683,14 @@ function main() {
 
   function buildEmbedSnippet() {
     // VEV-ready: one container div + one <style> + one <script>, fully inline, no file paths.
-    const cfg = JSON.stringify(serializeConfig(), null, 2);
+    const cfgObj = serializeConfig();
+    const cfg = JSON.stringify(cfgObj, null, 2);
+    const bg = (cfgObj && cfgObj.colors && cfgObj.colors.background) || "#0b0712";
     return (
       `<div id="metaball-gradient"></div>\n\n` +
       `<style>\n` +
-      `  #metaball-gradient{position:relative;width:100%;height:100%;min-height:240px;overflow:hidden;background:#0b0712;isolation:isolate;}\n` +
+      `  #metaball-gradient{position:relative;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
       `  #metaball-gradient canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
-      `  #metaball-gradient .mbg-panel{position:absolute;top:12px;left:12px;z-index:2;width:min(300px,calc(100% - 24px));border-radius:14px;border:1px solid rgba(255,255,255,.16);background:linear-gradient(180deg,rgba(255,255,255,.10),rgba(14,10,22,.52));box-shadow:0 12px 40px rgba(0,0,0,.45);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);color:rgba(255,255,255,.92);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";pointer-events:auto;user-select:none;}\n` +
-      `  #metaball-gradient .mbg-panel__header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.10);}\n` +
-      `  #metaball-gradient .mbg-title{font-size:.95rem;font-weight:650;letter-spacing:.01em;}\n` +
-      `  #metaball-gradient .mbg-btn{appearance:none;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:rgba(255,255,255,.90);border-radius:10px;padding:6px 10px;font-size:.85rem;cursor:pointer;}\n` +
-      `  #metaball-gradient .mbg-btn:hover{background:rgba(255,255,255,.10);}\n` +
-      `  #metaball-gradient .mbg-panel__body{padding:12px;max-height:calc(100% - 54px);overflow:auto;}\n` +
-      `  #metaball-gradient .mbg-panel.is-collapsed .mbg-panel__body{display:none;}\n` +
-      `  #metaball-gradient .mbg-control{margin:10px 0;}\n` +
-      `  #metaball-gradient .mbg-label{display:block;font-size:.82rem;color:rgba(255,255,255,.78);margin-bottom:6px;}\n` +
-      `  #metaball-gradient .mbg-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;}\n` +
-      `  #metaball-gradient .mbg-value{min-width:48px;text-align:right;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.80);font-size:.82rem;}\n` +
-      `  #metaball-gradient input[type="range"]{width:100%;-webkit-appearance:none;appearance:none;height:12px;border-radius:999px;background:rgba(255,255,255,.10);outline:none;}\n` +
-      `  #metaball-gradient input[type="range"]::-webkit-slider-runnable-track{height:12px;border-radius:999px;background:rgba(255,255,255,.10);}\n` +
-      `  #metaball-gradient input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:-3px;border-radius:999px;background:#8b1d82;border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 16px rgba(0,0,0,.35);}\n` +
-      `  #metaball-gradient input[type="range"]::-moz-range-track{height:12px;border-radius:999px;background:rgba(255,255,255,.10);border:none;}\n` +
-      `  #metaball-gradient input[type="range"]::-moz-range-thumb{width:18px;height:18px;border-radius:999px;background:#8b1d82;border:1px solid rgba(255,255,255,.25);box-shadow:0 6px 16px rgba(0,0,0,.35);}\n` +
-      `  #metaball-gradient .mbg-divider{height:1px;margin:12px 0;background:rgba(255,255,255,.10);}\n` +
-      `  #metaball-gradient .mbg-blobs{display:grid;gap:12px;}\n` +
-      `  #metaball-gradient .mbg-blob{border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px;background:rgba(255,255,255,.03);}\n` +
-      `  #metaball-gradient .mbg-blob__head{display:flex;align-items:center;justify-content:space-between;gap:10px;}\n` +
-      `  #metaball-gradient .mbg-blob__label{font-size:.88rem;color:rgba(255,255,255,.88);font-weight:600;}\n` +
-      `  #metaball-gradient .mbg-blob input[type="color"]{width:44px;height:28px;border-radius:8px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.05);padding:0;}\n` +
-      `  #metaball-gradient .mbg-swatches{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}\n` +
-      `  #metaball-gradient .mbg-swatch{width:18px;height:18px;border-radius:999px;border:1px solid rgba(255,255,255,.18);cursor:pointer;padding:0;background:transparent;}\n` +
-      `  #metaball-gradient .mbg-swatch:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(255,255,255,.18);}\n` +
       `  #metaball-gradient .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
       `<script>\n` +
@@ -732,10 +709,7 @@ function main() {
       `    if(!root) return;\n` +
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
-      `    var panel=document.createElement("div");panel.className="mbg-panel";\n` +
-      `    panel.innerHTML='<div class="mbg-panel__header"><div class="mbg-title">Metaballs</div><button class="mbg-btn" type="button" data-action="toggle">Hide</button></div><div class="mbg-panel__body"><div class="mbg-control"><label class="mbg-label" for="mbg-count">Metaball Count</label><div class="mbg-row"><input id="mbg-count" type="range" min="1" max="8" step="1" /><output class="mbg-value" id="mbg-count-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-grain">Grain Intensity</label><div class="mbg-row"><input id="mbg-grain" type="range" min="0" max="1" step="0.01" /><output class="mbg-value" id="mbg-grain-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-dist">Blob Distortion</label><div class="mbg-row"><input id="mbg-dist" type="range" min="0" max="1" step="0.01" /><output class="mbg-value" id="mbg-dist-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-dscale">Distortion Scale</label><div class="mbg-row"><input id="mbg-dscale" type="range" min="0.25" max="4" step="0.01" /><output class="mbg-value" id="mbg-dscale-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-soft">Global Softness</label><div class="mbg-row"><input id="mbg-soft" type="range" min="0.4" max="1.8" step="0.01" /><output class="mbg-value" id="mbg-soft-v"></output></div></div><div class="mbg-control"><label class="mbg-label" for="mbg-svar">Softness Variation</label><div class="mbg-row"><input id="mbg-svar" type="range" min="0" max="0.6" step="0.01" /><output class="mbg-value" id="mbg-svar-v"></output></div></div><div class="mbg-divider"></div><div class="mbg-blobs" id="mbg-blobs"></div></div>';\n` +
-      `    root.appendChild(panel);\n` +
-      `    function $(id){return root.querySelector(id);}\n` +
+      `    function $(sel){return root.querySelector(sel);}\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
       `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,globalSoftness:1.02,softVar:0.12};\n` +
       `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
@@ -763,16 +737,7 @@ function main() {
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
       `    var lastW=0,lastH=0;function resize(rect){var cssW=Math.max(1,Math.floor(rect&&rect.width?rect.width:root.clientWidth));var cssH=Math.max(1,Math.floor(rect&&rect.height?rect.height:root.clientHeight));var dpr=Math.min(dprCap,window.devicePixelRatio||1);var w=Math.max(2,Math.floor(cssW*dpr*renderScale));var h=Math.max(2,Math.floor(cssH*dpr*renderScale));if(w===lastW&&h===lastH)return;lastW=w;lastH=h;canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);gl.uniform2f(uRes,w,h);} \n` +
       `    if(typeof ResizeObserver!=='undefined'){var ro=new ResizeObserver(function(es){if(!es||!es.length)return;resize(es[es.length-1].contentRect);});ro.observe(root);}else{window.addEventListener('resize',function(){resize({width:root.clientWidth,height:root.clientHeight});});}\n` +
-      `    var btn=panel.querySelector('[data-action="toggle"]');btn.addEventListener('click',function(){var c=panel.classList.toggle('is-collapsed');btn.textContent=c?'Show':'Hide';});\n` +
-      `    function bindRange(id,outId,key,fmt){var el=$(id),out=$(outId);if(!el||!out)return;el.value=String(state[key]);out.value=fmt?fmt(state[key]):String(state[key]);el.addEventListener('input',function(){var v=parseFloat(el.value);state[key]=v;out.value=fmt?fmt(v):String(v);});}\n` +
-      `    function bindInt(id,outId,key){var el=$(id),out=$(outId);if(!el||!out)return;el.value=String(state[key]);out.value=String(state[key]);el.addEventListener('input',function(){var v=parseInt(el.value,10);state[key]=v;out.value=String(v);rebuild();});}\n` +
-      `    bindInt('#mbg-count','#mbg-count-v','blobCount');bindRange('#mbg-grain','#mbg-grain-v','grain',function(v){return v.toFixed(2);});bindRange('#mbg-dist','#mbg-dist-v','distAmount',function(v){return v.toFixed(2);});bindRange('#mbg-dscale','#mbg-dscale-v','distScale',function(v){return v.toFixed(2);});bindRange('#mbg-soft','#mbg-soft-v','globalSoftness',function(v){return v.toFixed(2);});bindRange('#mbg-svar','#mbg-svar-v','softVar',function(v){return v.toFixed(2);});\n` +
-      `    var blobsEl=$('#mbg-blobs');\n` +
-      `    function buildSwatches(container,onPick){container.textContent='';for(var si=0;si<SWATCHES.length;si++){(function(hex){var b=document.createElement('button');b.type='button';b.className='mbg-swatch';b.style.background=hex;b.title=hex;b.addEventListener('click',function(){onPick(hex);});container.appendChild(b);})(SWATCHES[si]);}}\n` +
-      `    function setBlobColor(i,hex){blobs[i].color=hex;var rgb=hexToRgb01(hex);blobColor[i*3]=rgb[0];blobColor[i*3+1]=rgb[1];blobColor[i*3+2]=rgb[2];gl.uniform3fv(uCol,blobColor);} \n` +
-      `    function ensure(n){for(var i=0;i<n;i++){if(!blobs[i].color)blobs[i].color=pickDefaultColor(i);}}\n` +
-      `    function rebuild(){if(!blobsEl)return;var n=clamp(state.blobCount|0,1,MAX_BLOBS);state.blobCount=n;ensure(n);blobsEl.textContent='';for(var i=0;i<n;i++){(function(idx){var wrap=document.createElement('div');wrap.className='mbg-blob';var head=document.createElement('div');head.className='mbg-blob__head';var label=document.createElement('div');label.className='mbg-blob__label';label.textContent='Blob '+(idx+1);var color=document.createElement('input');color.type='color';color.value=blobs[idx].color;color.addEventListener('input',function(){setBlobColor(idx,color.value);});head.appendChild(label);head.appendChild(color);var sw=document.createElement('div');sw.className='mbg-swatches';buildSwatches(sw,function(hex){color.value=hex;setBlobColor(idx,hex);});wrap.appendChild(head);wrap.appendChild(sw);blobsEl.appendChild(wrap);})(i);} }\n` +
-      `    rebuild();\n` +
+      `` +
       `    gl.disable(gl.DEPTH_TEST);gl.disable(gl.BLEND);\n` +
       `    var running=true,raf=0,t0=performance.now();\n` +
       `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
