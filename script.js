@@ -686,16 +686,20 @@ function main() {
     const cfgObj = serializeConfig();
     const cfg = JSON.stringify(cfgObj, null, 2);
     const bg = (cfgObj && cfgObj.colors && cfgObj.colors.background) || "#0b0712";
+    // Critical: make each snippet instance-scoped so multiple embeds on one page
+    // can coexist with different presets without interfering with each other.
+    const instanceId = `metaball-gradient-${cfgObj.savedAt || Date.now()}`;
     return (
-      `<div id="metaball-gradient"></div>\n\n` +
+      `<div id="${instanceId}"></div>\n\n` +
       `<style>\n` +
-      `  #metaball-gradient{position:relative;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
-      `  #metaball-gradient canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
-      `  #metaball-gradient .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
+      `  #${instanceId}{position:relative;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
+      `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
       `<script>\n` +
       `(function(){\n` +
       `  "use strict";\n` +
+      `  var ROOT_ID=${JSON.stringify(instanceId)};\n` +
       `  var PRESET=${cfg};\n` +
       `  function clamp(x,a,b){return Math.max(a,Math.min(b,x));}\n` +
       `  function hexToRgb01(hex){var h=String(hex||"").replace("#","").trim();if(h.length!==6)return[0,0,0];return[parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}\n` +
@@ -746,8 +750,8 @@ function main() {
       `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize({width:root.clientWidth,height:root.clientHeight});var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
-      `  var nodes=document.querySelectorAll('#metaball-gradient');\n` +
-      `  for(var i=0;i<nodes.length;i++){init(nodes[i]);}\n` +
+      `  var root=document.getElementById(ROOT_ID);\n` +
+      `  if(root) init(root);\n` +
       `})();\n` +
       `</script>\n`
     );
