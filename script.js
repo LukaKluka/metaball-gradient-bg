@@ -692,9 +692,8 @@ function main() {
     return (
       `<div id="${instanceId}"></div>\n\n` +
       `<style>\n` +
-      // VEV note: embed HTML is wrapped by VEV inside its own container with a configured height.
-      // We fill that wrapper by absolutely positioning the root to the wrapper bounds.
-      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:1px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      // Root fills the VEV Embed Anything block (acts like a background layer).
+      `  #${instanceId}{position:absolute;inset:0;width:100%;height:100%;min-height:100%;overflow:hidden;background:${bg};isolation:isolate;}\n` +
       `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
       `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
@@ -713,12 +712,7 @@ function main() {
       `  function createBlob(i){return{color:pickDefaultColor(i),baseX:0.25+rand01(i,1.1)*0.5,baseY:0.25+rand01(i,2.2)*0.5,moveAmpX:0.08+rand01(i,3.3)*0.14,moveAmpY:0.08+rand01(i,4.4)*0.14,moveFreqX:0.03+rand01(i,5.5)*0.06,moveFreqY:0.03+rand01(i,6.6)*0.06,radius:0.16+rand01(i,7.7)*0.18,pulseAmp:0.03+rand01(i,8.8)*0.06,pulseFreq:0.08+rand01(i,9.9)*0.18,phase:rand01(i,10.1)*Math.PI*2,softnessSeed:rand01(i,11.2)*2-1,distortionSeed:rand01(i,12.3)};}\n` +
       `  function init(root){\n` +
       `    if(!root) return;\n` +
-      `    // VEV sizing: keep root in-flow and measure it; if height is applied on a wrapper,\n` +
-      `    // mirror that onto the root so getBoundingClientRect() becomes meaningful.\n` +
       `    var parent=root.parentElement;\n` +
-      `    root.style.position='relative';\n` +
-      `    root.style.width='100%';\n` +
-      `    root.style.height='100%';\n` +
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
@@ -750,16 +744,15 @@ function main() {
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
       `    function measureSize(){\n` +
+      `      // Container-based sizing: measure the root; fall back to the parent if needed.\n` +
       `      var rr=root.getBoundingClientRect();\n` +
       `      var w=(rr.width||0);\n` +
       `      var h=(rr.height||0);\n` +
-      `      if((h<2||w<2) && parent){\n` +
+      `      if((h<2 || w<2) && parent){\n` +
       `        var pr=parent.getBoundingClientRect();\n` +
       `        if((pr.height||0)>2){\n` +
-      `          // Mirror the wrapper height onto the root so the canvas can fill it.\n` +
-      `          root.style.height=Math.floor(pr.height)+'px';\n` +
-      `          rr=root.getBoundingClientRect();\n` +
-      `          w=(rr.width||0);h=(rr.height||0);\n` +
+      `          w=pr.width||w;\n` +
+      `          h=pr.height||h;\n` +
       `        }\n` +
       `      }\n` +
       `      return {w:w,h:h};\n` +
@@ -798,13 +791,7 @@ function main() {
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
-      `  // VEV can apply sizing after initial layout; retry a few times if not ready.\n` +
-      `  var tries=0;function boot(){\n` +
-      `    var r=document.getElementById(ROOT_ID);\n` +
-      `    if(r){init(r);return;}\n` +
-      `    tries++;if(tries<40) setTimeout(boot,50);\n` +
-      `  }\n` +
-      `  boot();\n` +
+      `  if(root) init(root);\n` +
       `})();\n` +
       `</script>\n`
     );
