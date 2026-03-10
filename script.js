@@ -714,8 +714,31 @@ function main() {
       `  function createBlob(i){return{color:pickDefaultColor(i),baseX:0.25+rand01(i,1.1)*0.5,baseY:0.25+rand01(i,2.2)*0.5,moveAmpX:0.08+rand01(i,3.3)*0.14,moveAmpY:0.08+rand01(i,4.4)*0.14,moveFreqX:0.03+rand01(i,5.5)*0.06,moveFreqY:0.03+rand01(i,6.6)*0.06,radius:0.16+rand01(i,7.7)*0.18,pulseAmp:0.03+rand01(i,8.8)*0.06,pulseFreq:0.08+rand01(i,9.9)*0.18,phase:rand01(i,10.1)*Math.PI*2,softnessSeed:rand01(i,11.2)*2-1,distortionSeed:rand01(i,12.3)};}\n` +
       `  function init(root){\n` +
       `    if(!root) return;\n` +
-      `    // Ensure the VEV wrapper becomes the containing block for absolute fill.\n` +
-      `    var host=root.parentElement||root;\n` +
+      `    // VEV often wraps embeds in multiple nested divs; the "real" sized wrapper\n` +
+      `    // may be a few levels up. Pick the nearest ancestor with a meaningful height\n` +
+      `    // and a width comparable to the embed block.\n` +
+      `    function findHost(el){\n` +
+      `      var r0=el.getBoundingClientRect();\n` +
+      `      var baseW=(r0.width||el.clientWidth||0);\n` +
+      `      var best=el.parentElement||el;\n` +
+      `      var bestRect=best.getBoundingClientRect();\n` +
+      `      var bestH=(bestRect.height||0);\n` +
+      `      var maxH=bestH;\n` +
+      `      var cur=el;\n` +
+      `      for(var i=0;i<20;i++){\n` +
+      `        if(!cur || !cur.parentElement) break;\n` +
+      `        cur=cur.parentElement;\n` +
+      `        var rr=cur.getBoundingClientRect();\n` +
+      `        var w=(rr.width||0);\n` +
+      `        var h=(rr.height||0);\n` +
+      `        // Avoid accidentally selecting full-page containers.\n` +
+      `        if(h>0 && h<=window.innerHeight*2.5 && w>=Math.max(1,baseW-2) && w<=Math.max(baseW*1.8, baseW+2)){\n` +
+      `          if(h>maxH+2){best=cur;maxH=h;}\n` +
+      `        }\n` +
+      `      }\n` +
+      `      return best||el;\n` +
+      `    }\n` +
+      `    var host=findHost(root);\n` +
       `    try{\n` +
       `      if(host && host!==root){\n` +
       `        var cs=window.getComputedStyle(host);\n` +
@@ -754,16 +777,13 @@ function main() {
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
       `    function measureSize(){\n` +
-      `      var r=(host||root).getBoundingClientRect();\n` +
-      `      var w=r.width||0;var h=r.height||0;\n` +
-      `      // If the host height is still collapsed, fall back to a visible minimum.\n` +
-      `      if(h<2){\n` +
-      `        root.classList.add('mbg-fallbackSize');\n` +
-      `        var rr=root.getBoundingClientRect();\n` +
-      `        w=Math.max(w,rr.width||0);\n` +
-      `        h=Math.max(h,rr.height||0);\n` +
-      `      }else{\n` +
-      `        root.classList.remove('mbg-fallbackSize');\n` +
+      `      var rr=(host||root).getBoundingClientRect();\n` +
+      `      var w=(rr.width||0);\n` +
+      `      var h=(rr.height||0);\n` +
+      `      if(h<2 || w<2){\n` +
+      `        var r2=root.getBoundingClientRect();\n` +
+      `        w=Math.max(w,(r2.width||0));\n` +
+      `        h=Math.max(h,(r2.height||0));\n` +
       `      }\n` +
       `      if(h<2) h=240;\n` +
       `      if(w<2) w=2;\n` +
@@ -786,7 +806,7 @@ function main() {
       `    if(typeof ResizeObserver!=='undefined'){\n` +
       `      var ro=new ResizeObserver(function(){resize();});\n` +
       `      ro.observe(root);\n` +
-      `      if(root.parentElement) ro.observe(root.parentElement);\n` +
+      `      if(host && host!==root) ro.observe(host);\n` +
       `    }else{\n` +
       `      window.addEventListener('resize',function(){resize();});\n` +
       `    }\n` +
