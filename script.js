@@ -692,9 +692,10 @@ function main() {
     return (
       `<div id="${instanceId}"></div>\n\n` +
       `<style>\n` +
-      // VEV note: many embed wrappers only work reliably when the root has an explicit min-height.
-      // We DO NOT hard-set pixel height in JS; we resize the WebGL buffer from measured container size.
-      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      // VEV note: embed HTML is wrapped by VEV inside its own container with a configured height.
+      // We fill that wrapper by absolutely positioning the root to the wrapper bounds.
+      `  #${instanceId}{position:absolute;inset:0;display:block;width:100%;height:100%;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      `  #${instanceId}.mbg-fallbackSize{position:relative;min-height:240px;}\n` +
       `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
       `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
@@ -713,6 +714,15 @@ function main() {
       `  function createBlob(i){return{color:pickDefaultColor(i),baseX:0.25+rand01(i,1.1)*0.5,baseY:0.25+rand01(i,2.2)*0.5,moveAmpX:0.08+rand01(i,3.3)*0.14,moveAmpY:0.08+rand01(i,4.4)*0.14,moveFreqX:0.03+rand01(i,5.5)*0.06,moveFreqY:0.03+rand01(i,6.6)*0.06,radius:0.16+rand01(i,7.7)*0.18,pulseAmp:0.03+rand01(i,8.8)*0.06,pulseFreq:0.08+rand01(i,9.9)*0.18,phase:rand01(i,10.1)*Math.PI*2,softnessSeed:rand01(i,11.2)*2-1,distortionSeed:rand01(i,12.3)};}\n` +
       `  function init(root){\n` +
       `    if(!root) return;\n` +
+      `    // Ensure the VEV wrapper becomes the containing block for absolute fill.\n` +
+      `    var host=root.parentElement||root;\n` +
+      `    try{\n` +
+      `      if(host && host!==root){\n` +
+      `        var cs=window.getComputedStyle(host);\n` +
+      `        if(cs && cs.position==='static') host.style.position='relative';\n` +
+      `        if(cs && cs.overflow==='visible') host.style.overflow='hidden';\n` +
+      `      }\n` +
+      `    }catch(e){}\n` +
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
@@ -744,26 +754,19 @@ function main() {
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
       `    function measureSize(){\n` +
-      `      // VEV embeds often sit inside multiple wrappers; the immediate parent may not carry the final height.\n` +
-      `      // Walk up a few levels and pick the largest reasonable rect that matches the embed width.\n` +
-      `      var r=root.getBoundingClientRect();\n` +
+      `      var r=(host||root).getBoundingClientRect();\n` +
       `      var w=r.width||0;var h=r.height||0;\n` +
-      `      var baseW=w||root.clientWidth||0;\n` +
-      `      var el=root;\n` +
-      `      for(var i=0;i<12;i++){\n` +
-      `        if(!el || !el.parentElement) break;\n` +
-      `        el=el.parentElement;\n` +
-      `        var rr=el.getBoundingClientRect();\n` +
-      `        var rw=rr.width||0;var rh=rr.height||0;\n` +
-      `        if(rw>=Math.max(1,baseW-2) && rh>h+2 && rh<5000){\n` +
-      `          w=Math.max(w,rw);\n` +
-      `          h=Math.max(h,rh);\n` +
-      `        }\n` +
+      `      // If the host height is still collapsed, fall back to a visible minimum.\n` +
+      `      if(h<2){\n` +
+      `        root.classList.add('mbg-fallbackSize');\n` +
+      `        var rr=root.getBoundingClientRect();\n` +
+      `        w=Math.max(w,rr.width||0);\n` +
+      `        h=Math.max(h,rr.height||0);\n` +
+      `      }else{\n` +
+      `        root.classList.remove('mbg-fallbackSize');\n` +
       `      }\n` +
       `      if(h<2) h=240;\n` +
       `      if(w<2) w=2;\n` +
-      `      // Ensure the root actually occupies the measured height (some wrappers don't resolve % heights).\n` +
-      `      root.style.height=Math.floor(h)+'px';\n` +
       `      return {w:w,h:h};\n` +
       `    }\n` +
       `    var lastW=0,lastH=0;function resize(){\n` +
