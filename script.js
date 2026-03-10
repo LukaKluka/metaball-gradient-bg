@@ -692,8 +692,10 @@ function main() {
     return (
       `<div id="${instanceId}"></div>\n\n` +
       `<style>\n` +
-      // Root fills the VEV Embed Anything block (acts like a background layer).
-      `  #${instanceId}{position:absolute;inset:0;width:100%;height:100%;min-height:100%;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      `  html,body{height:100%;margin:0;}\n` +
+      // VEV note: many embed wrappers only work reliably when the root has an explicit min-height.
+      // We DO NOT hard-set pixel height in JS; we resize the WebGL buffer from measured container size.
+      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
       `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
       `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
@@ -712,7 +714,6 @@ function main() {
       `  function createBlob(i){return{color:pickDefaultColor(i),baseX:0.25+rand01(i,1.1)*0.5,baseY:0.25+rand01(i,2.2)*0.5,moveAmpX:0.08+rand01(i,3.3)*0.14,moveAmpY:0.08+rand01(i,4.4)*0.14,moveFreqX:0.03+rand01(i,5.5)*0.06,moveFreqY:0.03+rand01(i,6.6)*0.06,radius:0.16+rand01(i,7.7)*0.18,pulseAmp:0.03+rand01(i,8.8)*0.06,pulseFreq:0.08+rand01(i,9.9)*0.18,phase:rand01(i,10.1)*Math.PI*2,softnessSeed:rand01(i,11.2)*2-1,distortionSeed:rand01(i,12.3)};}\n` +
       `  function init(root){\n` +
       `    if(!root) return;\n` +
-      `    var parent=root.parentElement;\n` +
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
@@ -744,26 +745,41 @@ function main() {
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
       `    function measureSize(){\n` +
-      `      // Container-based sizing: measure the root; fall back to the parent if needed.\n` +
-      `      var rr=root.getBoundingClientRect();\n` +
-      `      var w=(rr.width||0);\n` +
-      `      var h=(rr.height||0);\n` +
-      `      if((h<2 || w<2) && parent){\n` +
-      `        var pr=parent.getBoundingClientRect();\n` +
-      `        if((pr.height||0)>2){\n` +
-      `          w=pr.width||w;\n` +
-      `          h=pr.height||h;\n` +
+      `      // VEV embeds often sit inside multiple wrappers; the immediate parent may not carry the final height.\n` +
+      `      // Walk up a few levels and pick the largest reasonable rect that matches the embed width.\n` +
+      `      var r=root.getBoundingClientRect();\n` +
+      `      var w=r.width||0;var h=r.height||0;\n` +
+      `      var baseW=w||root.clientWidth||0;\n` +
+      `      var el=root;\n` +
+      `      for(var i=0;i<12;i++){\n` +
+      `        if(!el || !el.parentElement) break;\n` +
+      `        el=el.parentElement;\n` +
+      `        var rr=el.getBoundingClientRect();\n` +
+      `        var rw=rr.width||0;var rh=rr.height||0;\n` +
+      `        if(rw>=Math.max(1,baseW-2) && rh>h+2 && rh<5000){\n` +
+      `          w=Math.max(w,rw);\n` +
+      `          h=Math.max(h,rh);\n` +
       `        }\n` +
       `      }\n` +
+      `      // If we're inside an iframe (common for VEV embeds), the iframe viewport is the true container.\n` +
+      `      // This fixes cases where DOM ancestors report ~200px while the embed block is taller.\n` +
+      `      var inIframe=false;try{inIframe=window.self!==window.top;}catch(e){inIframe=true;}\n` +
+      `      if(inIframe){\n` +
+      `        var vw=window.innerWidth||0;var vh=window.innerHeight||0;\n` +
+      `        // Prefer iframe viewport when it looks meaningfully larger than measured DOM heights.\n` +
+      `        if(vh>h+8) { h=vh; }\n` +
+      `        if(vw>w+8) { w=vw; }\n` +
+      `      }\n` +
+      `      if(h<2) h=240;\n` +
+      `      if(w<2) w=2;\n` +
+      `      // Ensure the root actually occupies the measured height (some wrappers don't resolve % heights).\n` +
+      `      root.style.height=Math.floor(h)+'px';\n` +
       `      return {w:w,h:h};\n` +
       `    }\n` +
       `    var lastW=0,lastH=0;function resize(){\n` +
       `      var m=measureSize();\n` +
-      `      var cssW=Math.floor(m.w||0);\n` +
-      `      var cssH=Math.floor(m.h||0);\n` +
-      `      if(cssW<2 || cssH<2) return;\n` +
-      `      canvas.style.width=cssW+'px';\n` +
-      `      canvas.style.height=cssH+'px';\n` +
+      `      var cssW=Math.max(1,Math.floor(m.w));\n` +
+      `      var cssH=Math.max(1,Math.floor(m.h));\n` +
       `      var dpr=Math.min(dprCap,window.devicePixelRatio||1);\n` +
       `      var w=Math.max(2,Math.floor(cssW*dpr*renderScale));\n` +
       `      var h=Math.max(2,Math.floor(cssH*dpr*renderScale));\n` +
@@ -777,7 +793,7 @@ function main() {
       `    if(typeof ResizeObserver!=='undefined'){\n` +
       `      var ro=new ResizeObserver(function(){resize();});\n` +
       `      ro.observe(root);\n` +
-      `      if(parent) ro.observe(parent);\n` +
+      `      if(root.parentElement) ro.observe(root.parentElement);\n` +
       `    }else{\n` +
       `      window.addEventListener('resize',function(){resize();});\n` +
       `    }\n` +
