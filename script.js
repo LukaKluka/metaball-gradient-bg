@@ -713,38 +713,12 @@ function main() {
       `  function createBlob(i){return{color:pickDefaultColor(i),baseX:0.25+rand01(i,1.1)*0.5,baseY:0.25+rand01(i,2.2)*0.5,moveAmpX:0.08+rand01(i,3.3)*0.14,moveAmpY:0.08+rand01(i,4.4)*0.14,moveFreqX:0.03+rand01(i,5.5)*0.06,moveFreqY:0.03+rand01(i,6.6)*0.06,radius:0.16+rand01(i,7.7)*0.18,pulseAmp:0.03+rand01(i,8.8)*0.06,pulseFreq:0.08+rand01(i,9.9)*0.18,phase:rand01(i,10.1)*Math.PI*2,softnessSeed:rand01(i,11.2)*2-1,distortionSeed:rand01(i,12.3)};}\n` +
       `  function init(root){\n` +
       `    if(!root) return;\n` +
-      `    // Sizing architecture for VEV:\n` +
-      `    // - The Embed Anything block height is usually applied on a wrapper element.\n` +
-      `    // - Our root div may not inherit that height.\n` +
-      `    // We locate the most likely wrapper and reparent our root into it, then absolute-fill it.\n` +
-      `    function pickHost(el){\n` +
-      `      var base=el.getBoundingClientRect();\n` +
-      `      var baseW=(base.width||el.clientWidth||0);\n` +
-      `      var best=el.parentElement||el;\n` +
-      `      var bestScore=0;\n` +
-      `      var cur=el;\n` +
-      `      for(var i=0;i<25;i++){\n` +
-      `        if(!cur || !cur.parentElement) break;\n` +
-      `        cur=cur.parentElement;\n` +
-      `        var rr=cur.getBoundingClientRect();\n` +
-      `        var w=rr.width||0;var h=rr.height||0;\n` +
-      `        if(w<Math.max(1,baseW-2) || h<2 || h>8000) continue;\n` +
-      `        // Prefer wrappers that are taller than the current best, while staying near the embed width.\n` +
-      `        var widthPenalty=Math.abs(w-baseW);\n` +
-      `        var score=h*1000 - widthPenalty;\n` +
-      `        if(score>bestScore){bestScore=score;best=cur;}\n` +
-      `      }\n` +
-      `      return best||el.parentElement||el;\n` +
-      `    }\n` +
-      `    var host=pickHost(root);\n` +
-      `    try{\n` +
-      `      if(host && root.parentElement!==host){host.appendChild(root);} \n` +
-      `      var cs=host?window.getComputedStyle(host):null;\n` +
-      `      if(host && cs && cs.position==='static') host.style.position='relative';\n` +
-      `      if(host && cs && cs.overflow==='visible') host.style.overflow='hidden';\n` +
-      `      // Absolute-fill the selected host.\n` +
-      `      root.style.position='absolute';root.style.inset='0';root.style.width='100%';root.style.height='100%';\n` +
-      `    }catch(e){}\n` +
+      `    // VEV sizing: keep root in-flow and measure it; if height is applied on a wrapper,\n` +
+      `    // mirror that onto the root so getBoundingClientRect() becomes meaningful.\n` +
+      `    var parent=root.parentElement;\n` +
+      `    root.style.position='relative';\n` +
+      `    root.style.width='100%';\n` +
+      `    root.style.height='100%';\n` +
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
@@ -776,10 +750,18 @@ function main() {
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
       `    function measureSize(){\n` +
-      `      // Requirement: container-based sizing from the actual root container.\n` +
       `      var rr=root.getBoundingClientRect();\n` +
       `      var w=(rr.width||0);\n` +
       `      var h=(rr.height||0);\n` +
+      `      if((h<2||w<2) && parent){\n` +
+      `        var pr=parent.getBoundingClientRect();\n` +
+      `        if((pr.height||0)>2){\n` +
+      `          // Mirror the wrapper height onto the root so the canvas can fill it.\n` +
+      `          root.style.height=Math.floor(pr.height)+'px';\n` +
+      `          rr=root.getBoundingClientRect();\n` +
+      `          w=(rr.width||0);h=(rr.height||0);\n` +
+      `        }\n` +
+      `      }\n` +
       `      return {w:w,h:h};\n` +
       `    }\n` +
       `    var lastW=0,lastH=0;function resize(){\n` +
@@ -802,6 +784,7 @@ function main() {
       `    if(typeof ResizeObserver!=='undefined'){\n` +
       `      var ro=new ResizeObserver(function(){resize();});\n` +
       `      ro.observe(root);\n` +
+      `      if(parent) ro.observe(parent);\n` +
       `    }else{\n` +
       `      window.addEventListener('resize',function(){resize();});\n` +
       `    }\n` +
@@ -815,7 +798,13 @@ function main() {
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
-      `  if(root) init(root);\n` +
+      `  // VEV can apply sizing after initial layout; retry a few times if not ready.\n` +
+      `  var tries=0;function boot(){\n` +
+      `    var r=document.getElementById(ROOT_ID);\n` +
+      `    if(r){init(r);return;}\n` +
+      `    tries++;if(tries<40) setTimeout(boot,50);\n` +
+      `  }\n` +
+      `  boot();\n` +
       `})();\n` +
       `</script>\n`
     );
