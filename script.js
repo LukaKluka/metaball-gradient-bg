@@ -694,8 +694,7 @@ function main() {
       `<style>\n` +
       // VEV note: embed HTML is wrapped by VEV inside its own container with a configured height.
       // We fill that wrapper by absolutely positioning the root to the wrapper bounds.
-      `  #${instanceId}{position:absolute;inset:0;display:block;width:100%;height:100%;overflow:hidden;background:${bg};isolation:isolate;}\n` +
-      `  #${instanceId}.mbg-fallbackSize{position:relative;min-height:240px;}\n` +
+      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:1px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
       `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
       `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
@@ -714,37 +713,37 @@ function main() {
       `  function createBlob(i){return{color:pickDefaultColor(i),baseX:0.25+rand01(i,1.1)*0.5,baseY:0.25+rand01(i,2.2)*0.5,moveAmpX:0.08+rand01(i,3.3)*0.14,moveAmpY:0.08+rand01(i,4.4)*0.14,moveFreqX:0.03+rand01(i,5.5)*0.06,moveFreqY:0.03+rand01(i,6.6)*0.06,radius:0.16+rand01(i,7.7)*0.18,pulseAmp:0.03+rand01(i,8.8)*0.06,pulseFreq:0.08+rand01(i,9.9)*0.18,phase:rand01(i,10.1)*Math.PI*2,softnessSeed:rand01(i,11.2)*2-1,distortionSeed:rand01(i,12.3)};}\n` +
       `  function init(root){\n` +
       `    if(!root) return;\n` +
-      `    // VEV often wraps embeds in multiple nested divs; the "real" sized wrapper\n` +
-      `    // may be a few levels up. Pick the nearest ancestor with a meaningful height\n` +
-      `    // and a width comparable to the embed block.\n` +
-      `    function findHost(el){\n` +
-      `      var r0=el.getBoundingClientRect();\n` +
-      `      var baseW=(r0.width||el.clientWidth||0);\n` +
+      `    // Sizing architecture for VEV:\n` +
+      `    // - The Embed Anything block height is usually applied on a wrapper element.\n` +
+      `    // - Our root div may not inherit that height.\n` +
+      `    // We locate the most likely wrapper and reparent our root into it, then absolute-fill it.\n` +
+      `    function pickHost(el){\n` +
+      `      var base=el.getBoundingClientRect();\n` +
+      `      var baseW=(base.width||el.clientWidth||0);\n` +
       `      var best=el.parentElement||el;\n` +
-      `      var bestRect=best.getBoundingClientRect();\n` +
-      `      var bestH=(bestRect.height||0);\n` +
-      `      var maxH=bestH;\n` +
+      `      var bestScore=0;\n` +
       `      var cur=el;\n` +
-      `      for(var i=0;i<20;i++){\n` +
+      `      for(var i=0;i<25;i++){\n` +
       `        if(!cur || !cur.parentElement) break;\n` +
       `        cur=cur.parentElement;\n` +
       `        var rr=cur.getBoundingClientRect();\n` +
-      `        var w=(rr.width||0);\n` +
-      `        var h=(rr.height||0);\n` +
-      `        // Avoid accidentally selecting full-page containers.\n` +
-      `        if(h>0 && h<=window.innerHeight*2.5 && w>=Math.max(1,baseW-2) && w<=Math.max(baseW*1.8, baseW+2)){\n` +
-      `          if(h>maxH+2){best=cur;maxH=h;}\n` +
-      `        }\n` +
+      `        var w=rr.width||0;var h=rr.height||0;\n` +
+      `        if(w<Math.max(1,baseW-2) || h<2 || h>8000) continue;\n` +
+      `        // Prefer wrappers that are taller than the current best, while staying near the embed width.\n` +
+      `        var widthPenalty=Math.abs(w-baseW);\n` +
+      `        var score=h*1000 - widthPenalty;\n` +
+      `        if(score>bestScore){bestScore=score;best=cur;}\n` +
       `      }\n` +
-      `      return best||el;\n` +
+      `      return best||el.parentElement||el;\n` +
       `    }\n` +
-      `    var host=findHost(root);\n` +
+      `    var host=pickHost(root);\n` +
       `    try{\n` +
-      `      if(host && host!==root){\n` +
-      `        var cs=window.getComputedStyle(host);\n` +
-      `        if(cs && cs.position==='static') host.style.position='relative';\n` +
-      `        if(cs && cs.overflow==='visible') host.style.overflow='hidden';\n` +
-      `      }\n` +
+      `      if(host && root.parentElement!==host){host.appendChild(root);} \n` +
+      `      var cs=host?window.getComputedStyle(host):null;\n` +
+      `      if(host && cs && cs.position==='static') host.style.position='relative';\n` +
+      `      if(host && cs && cs.overflow==='visible') host.style.overflow='hidden';\n` +
+      `      // Absolute-fill the selected host.\n` +
+      `      root.style.position='absolute';root.style.inset='0';root.style.width='100%';root.style.height='100%';\n` +
       `    }catch(e){}\n` +
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
@@ -777,22 +776,19 @@ function main() {
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
       `    function measureSize(){\n` +
-      `      var rr=(host||root).getBoundingClientRect();\n` +
+      `      // Requirement: container-based sizing from the actual root container.\n` +
+      `      var rr=root.getBoundingClientRect();\n` +
       `      var w=(rr.width||0);\n` +
       `      var h=(rr.height||0);\n` +
-      `      if(h<2 || w<2){\n` +
-      `        var r2=root.getBoundingClientRect();\n` +
-      `        w=Math.max(w,(r2.width||0));\n` +
-      `        h=Math.max(h,(r2.height||0));\n` +
-      `      }\n` +
-      `      if(h<2) h=240;\n` +
-      `      if(w<2) w=2;\n` +
       `      return {w:w,h:h};\n` +
       `    }\n` +
       `    var lastW=0,lastH=0;function resize(){\n` +
       `      var m=measureSize();\n` +
-      `      var cssW=Math.max(1,Math.floor(m.w));\n` +
-      `      var cssH=Math.max(1,Math.floor(m.h));\n` +
+      `      var cssW=Math.floor(m.w||0);\n` +
+      `      var cssH=Math.floor(m.h||0);\n` +
+      `      if(cssW<2 || cssH<2) return;\n` +
+      `      canvas.style.width=cssW+'px';\n` +
+      `      canvas.style.height=cssH+'px';\n` +
       `      var dpr=Math.min(dprCap,window.devicePixelRatio||1);\n` +
       `      var w=Math.max(2,Math.floor(cssW*dpr*renderScale));\n` +
       `      var h=Math.max(2,Math.floor(cssH*dpr*renderScale));\n` +
@@ -806,7 +802,6 @@ function main() {
       `    if(typeof ResizeObserver!=='undefined'){\n` +
       `      var ro=new ResizeObserver(function(){resize();});\n` +
       `      ro.observe(root);\n` +
-      `      if(host && host!==root) ro.observe(host);\n` +
       `    }else{\n` +
       `      window.addEventListener('resize',function(){resize();});\n` +
       `    }\n` +
