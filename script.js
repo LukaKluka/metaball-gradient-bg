@@ -692,9 +692,9 @@ function main() {
     return (
       `<div id="${instanceId}"></div>\n\n` +
       `<style>\n` +
-      // VEV note: height:100% is not always resolvable inside embed wrappers.
-      // The script will actively size this root to its parent block.
-      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:0;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      // VEV note: many embed wrappers only work reliably when the root has an explicit min-height.
+      // We DO NOT hard-set pixel height in JS; we resize the WebGL buffer from measured container size.
+      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
       `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
       `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
@@ -717,7 +717,7 @@ function main() {
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,globalSoftness:1.02,softVar:0.12};\n` +
+      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12};\n` +
       `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
@@ -729,35 +729,39 @@ function main() {
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
       `    function fragSrc(prec){return prec+'\\n'+\n` +
-      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform float u_time;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
       `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
       `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
       `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
-      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*0.12;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=vec3(0.06,0.04,0.10);vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
+      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uTime=gl.getUniformLocation(prog,'u_time');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
-      `    var host=root.parentElement||root;\n` +
-      `    var hostW=0,hostH=0;\n` +
-      `    function syncRootToHost(){\n` +
-      `      if(!host) return;\n` +
-      `      var r=host.getBoundingClientRect();\n` +
-      `      // If host has a real height (VEV block), hard-set the root size to match.\n` +
-      `      // If not, fall back to a sensible minimum so the canvas is visible.\n` +
-      `      var w=Math.max(1,Math.floor(r.width||0));\n` +
-      `      var h=Math.max(1,Math.floor(r.height||0));\n` +
+      `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
+      `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
+      `    function measureSize(){\n` +
+      `      // Prefer the root size (VEV often sets the embed block height on the element itself).\n` +
+      `      var r=root.getBoundingClientRect();\n` +
+      `      var w=r.width||0;var h=r.height||0;\n` +
+      `      // If height collapses, fall back to parent wrapper.\n` +
+      `      if(h<2 && root.parentElement){\n` +
+      `        var pr=root.parentElement.getBoundingClientRect();\n` +
+      `        w=Math.max(w,pr.width||0);\n` +
+      `        h=Math.max(h,pr.height||0);\n` +
+      `      }\n` +
+      `      // Last-resort minimum so it stays visible.\n` +
       `      if(h<2) h=240;\n` +
-      `      hostW=w;hostH=h;\n` +
-      `      root.style.width=w+'px';\n` +
-      `      root.style.height=h+'px';\n` +
+      `      if(w<2) w=2;\n` +
+      `      return {w:w,h:h};\n` +
       `    }\n` +
       `    var lastW=0,lastH=0;function resize(){\n` +
-      `      var cssW=Math.max(1,hostW||root.clientWidth||1);\n` +
-      `      var cssH=Math.max(1,hostH||root.clientHeight||1);\n` +
+      `      var m=measureSize();\n` +
+      `      var cssW=Math.max(1,Math.floor(m.w));\n` +
+      `      var cssH=Math.max(1,Math.floor(m.h));\n` +
       `      var dpr=Math.min(dprCap,window.devicePixelRatio||1);\n` +
       `      var w=Math.max(2,Math.floor(cssW*dpr*renderScale));\n` +
       `      var h=Math.max(2,Math.floor(cssH*dpr*renderScale));\n` +
@@ -767,12 +771,13 @@ function main() {
       `      gl.viewport(0,0,w,h);\n` +
       `      gl.uniform2f(uRes,w,h);\n` +
       `    }\n` +
-      `    syncRootToHost();resize();\n` +
+      `    resize();\n` +
       `    if(typeof ResizeObserver!=='undefined'){\n` +
-      `      var ro=new ResizeObserver(function(){syncRootToHost();resize();});\n` +
-      `      ro.observe(host);\n` +
+      `      var ro=new ResizeObserver(function(){resize();});\n` +
+      `      ro.observe(root);\n` +
+      `      if(root.parentElement) ro.observe(root.parentElement);\n` +
       `    }else{\n` +
-      `      window.addEventListener('resize',function(){syncRootToHost();resize();});\n` +
+      `      window.addEventListener('resize',function(){resize();});\n` +
       `    }\n` +
       `` +
       `    gl.disable(gl.DEPTH_TEST);gl.disable(gl.BLEND);\n` +
