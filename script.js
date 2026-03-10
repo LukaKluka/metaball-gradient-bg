@@ -744,18 +744,26 @@ function main() {
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
       `    function measureSize(){\n` +
-      `      // Prefer the root size (VEV often sets the embed block height on the element itself).\n` +
+      `      // VEV embeds often sit inside multiple wrappers; the immediate parent may not carry the final height.\n` +
+      `      // Walk up a few levels and pick the largest reasonable rect that matches the embed width.\n` +
       `      var r=root.getBoundingClientRect();\n` +
       `      var w=r.width||0;var h=r.height||0;\n` +
-      `      // If height collapses, fall back to parent wrapper.\n` +
-      `      if(h<2 && root.parentElement){\n` +
-      `        var pr=root.parentElement.getBoundingClientRect();\n` +
-      `        w=Math.max(w,pr.width||0);\n` +
-      `        h=Math.max(h,pr.height||0);\n` +
+      `      var baseW=w||root.clientWidth||0;\n` +
+      `      var el=root;\n` +
+      `      for(var i=0;i<12;i++){\n` +
+      `        if(!el || !el.parentElement) break;\n` +
+      `        el=el.parentElement;\n` +
+      `        var rr=el.getBoundingClientRect();\n` +
+      `        var rw=rr.width||0;var rh=rr.height||0;\n` +
+      `        if(rw>=Math.max(1,baseW-2) && rh>h+2 && rh<5000){\n` +
+      `          w=Math.max(w,rw);\n` +
+      `          h=Math.max(h,rh);\n` +
+      `        }\n` +
       `      }\n` +
-      `      // Last-resort minimum so it stays visible.\n` +
       `      if(h<2) h=240;\n` +
       `      if(w<2) w=2;\n` +
+      `      // Ensure the root actually occupies the measured height (some wrappers don't resolve % heights).\n` +
+      `      root.style.height=Math.floor(h)+'px';\n` +
       `      return {w:w,h:h};\n` +
       `    }\n` +
       `    var lastW=0,lastH=0;function resize(){\n` +
