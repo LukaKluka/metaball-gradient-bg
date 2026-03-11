@@ -772,9 +772,9 @@ function main() {
       `<div id="${instanceId}"></div>\n\n` +
       `<style>\n` +
       `  html,body{height:100%;margin:0;}\n` +
-      // VEV note: many embed wrappers only work reliably when the root has an explicit min-height.
-      // We DO NOT hard-set pixel height in JS; we resize the WebGL buffer from measured container size.
-      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      // VEV note: the embed block should define the height. Avoid hard min-height that can
+      // produce “fixed height” behavior on responsive layouts.
+      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:0;overflow:hidden;background:${bg};isolation:isolate;}\n` +
       `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
       `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
@@ -824,34 +824,46 @@ function main() {
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
       `    function measureSize(){\n` +
-      `      // VEV embeds often sit inside multiple wrappers; the immediate parent may not carry the final height.\n` +
-      `      // Walk up a few levels and pick the largest reasonable rect that matches the embed width.\n` +
-      `      var r=root.getBoundingClientRect();\n` +
-      `      var w=r.width||0;var h=r.height||0;\n` +
-      `      var baseW=w||root.clientWidth||0;\n` +
-      `      var el=root;\n` +
-      `      for(var i=0;i<12;i++){\n` +
-      `        if(!el || !el.parentElement) break;\n` +
-      `        el=el.parentElement;\n` +
-      `        var rr=el.getBoundingClientRect();\n` +
-      `        var rw=rr.width||0;var rh=rr.height||0;\n` +
-      `        if(rw>=Math.max(1,baseW-2) && rh>h+2 && rh<5000){\n` +
-      `          w=Math.max(w,rw);\n` +
-      `          h=Math.max(h,rh);\n` +
+      `      // VEV "Embed Anything" commonly runs inside an iframe. The most reliable size source\n` +
+      `      // is the iframe element itself (frameElement) and its parent wrapper.\n` +
+      `      var w=0,h=0;\n` +
+      `      try{\n` +
+      `        var fe=window.frameElement;\n` +
+      `        if(fe){\n` +
+      `          // Make iframe behave like a full-bleed block.\n` +
+      `          fe.style.display='block';\n` +
+      `          fe.style.width='100%';\n` +
+      `          fe.style.border='0';\n` +
+      `          // If we can see the parent wrapper, sync iframe height to it.\n` +
+      `          if(fe.parentElement){\n` +
+      `            var pr=fe.parentElement.getBoundingClientRect();\n` +
+      `            if(pr && pr.height>2){\n` +
+      `              fe.style.height=Math.floor(pr.height)+'px';\n` +
+      `              w=pr.width||0; h=pr.height||0;\n` +
+      `            }\n` +
+      `          }\n` +
+      `          // Fall back to iframe rect.\n` +
+      `          if(h<2){\n` +
+      `            var fr=fe.getBoundingClientRect();\n` +
+      `            w=Math.max(w,fr.width||0);\n` +
+      `            h=Math.max(h,fr.height||0);\n` +
+      `          }\n` +
       `        }\n` +
+      `      }catch(e){}\n` +
+      `      // Fall back to root rect (non-iframe embeds).\n` +
+      `      if(h<2){\n` +
+      `        var r=root.getBoundingClientRect();\n` +
+      `        w=Math.max(w,r.width||0,root.clientWidth||0);\n` +
+      `        h=Math.max(h,r.height||0,root.clientHeight||0);\n` +
       `      }\n` +
-      `      // If we're inside an iframe (common for VEV embeds), the iframe viewport is the true container.\n` +
-      `      // This fixes cases where DOM ancestors report ~200px while the embed block is taller.\n` +
-      `      var inIframe=false;try{inIframe=window.self!==window.top;}catch(e){inIframe=true;}\n` +
-      `      if(inIframe){\n` +
-      `        var vw=window.innerWidth||0;var vh=window.innerHeight||0;\n` +
-      `        // Prefer iframe viewport when it looks meaningfully larger than measured DOM heights.\n` +
-      `        if(vh>h+8) { h=vh; }\n` +
-      `        if(vw>w+8) { w=vw; }\n` +
+      `      // Last resort: iframe viewport (still better than a fixed 200px).\n` +
+      `      if(h<2){\n` +
+      `        w=Math.max(w,window.innerWidth||0);\n` +
+      `        h=Math.max(h,window.innerHeight||0);\n` +
       `      }\n` +
-      `      if(h<2) h=240;\n` +
       `      if(w<2) w=2;\n` +
-      `      // Ensure the root actually occupies the measured height (some wrappers don't resolve % heights).\n` +
+      `      if(h<2) h=2;\n` +
+      `      // Ensure root fills the embed block.\n` +
       `      root.style.height=Math.floor(h)+'px';\n` +
       `      return {w:w,h:h};\n` +
       `    }\n` +
