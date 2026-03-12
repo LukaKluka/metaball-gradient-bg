@@ -184,7 +184,6 @@ uniform int u_blobCount;
 uniform float u_grain;
 uniform float u_globalSoftness;
 uniform float u_softVar;
-uniform float u_blur;
 uniform float u_distAmount;
 uniform float u_distScale;
 uniform float u_distSpeed;
@@ -258,8 +257,10 @@ void main() {
     float r = max(0.0001, u_blob[i].z);
     float dist = length(pp - c) * warp;
 
-    // Global Softness (kept as-is): controls effective falloff size (reads like scale/diffusion).
+    // Softness varies per blob around global softness using stable seeds.
     float soft = clamp(u_globalSoftness + u_softVar * u_blobSoftSeed[i], 0.35, 2.2);
+
+    // Gaussian-like influence: premium gradients, avoids hard circles.
     float sigma = r * soft;
     float w = exp(-(dist * dist) / (2.0 * sigma * sigma));
 
@@ -273,11 +274,9 @@ void main() {
   vec3 base = u_bgColor;
   vec3 blobCol = colorSum / max(1e-5, wSum);
 
-  // Coverage from field strength (kept as-is), then apply extra Blur as edge softening.
-  float coverage0 = 1.0 - exp(-wSum * 1.25);
-  coverage0 = clamp(coverage0, 0.0, 1.0);
-  float bw = mix(0.02, 0.35, clamp(u_blur, 0.0, 1.0));
-  float coverage = smoothstep(0.5 - 0.5 * bw, 0.5 + 0.5 * bw, coverage0);
+  // Coverage maps field strength to mix amount in a smooth, premium way.
+  float coverage = 1.0 - exp(-wSum * 1.25);
+  coverage = clamp(coverage, 0.0, 1.0);
 
   // Subtle vignette (helps text readability and premium depth).
   float v = smoothstep(0.95, 0.20, length(p));
@@ -324,7 +323,6 @@ function main() {
     distSpeed: 0.12,
     globalSoftness: 1.02,
     softVar: 0.12,
-    blur: 0.18,
     bgColor: "#0B0712",
   };
 
@@ -339,7 +337,6 @@ function main() {
         "distSpeed",
         "globalSoftness",
         "softVar",
-        "blur",
       ]) {
         if (typeof s[k] === "number" && Number.isFinite(s[k])) state[k] = s[k];
       }
@@ -434,7 +431,6 @@ function main() {
   const uGrain = gl.getUniformLocation(program, "u_grain");
   const uGlobalSoftness = gl.getUniformLocation(program, "u_globalSoftness");
   const uSoftVar = gl.getUniformLocation(program, "u_softVar");
-  const uBlur = gl.getUniformLocation(program, "u_blur");
   const uDistAmount = gl.getUniformLocation(program, "u_distAmount");
   const uDistScale = gl.getUniformLocation(program, "u_distScale");
   const uDistSpeed = gl.getUniformLocation(program, "u_distSpeed");
@@ -549,7 +545,6 @@ function main() {
   bindSlider("distSpeed", "distSpeedValue", "distSpeed", (v) => v.toFixed(2));
   bindSlider("globalSoftness", "globalSoftnessValue", "globalSoftness", (v) => v.toFixed(2));
   bindSlider("softVar", "softVarValue", "softVar", (v) => v.toFixed(2));
-  bindSlider("blur", "blurValue", "blur", (v) => v.toFixed(2));
 
   const blobControlsEl = $("blobControls");
   const bgColorEl = $("bgColor");
@@ -663,7 +658,6 @@ function main() {
         distSpeed: state.distSpeed,
         globalSoftness: state.globalSoftness,
         softVar: state.softVar,
-        blur: state.blur,
       },
       colors: {
         background: state.bgColor,
@@ -722,7 +716,7 @@ function main() {
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,blur:0.18};\n` +
+      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12};\n` +
       `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
@@ -734,21 +728,20 @@ function main() {
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
       `    function fragSrc(prec){return prec+'\\n'+\n` +
-      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_blur;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
       `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
       `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
       `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
-      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage0=1.0-exp(-wSum*1.25);coverage0=clamp(coverage0,0.0,1.0);float bw=mix(0.02,0.35,clamp(u_blur,0.0,1.0));float coverage=smoothstep(0.5-0.5*bw,0.5+0.5*bw,coverage0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
+      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uBl=gl.getUniformLocation(prog,'u_blur');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
-      `    gl.uniform1f(uBl,(typeof state.blur==='number'&&isFinite(state.blur))?state.blur:0.18);\n` +
       `    function measure(){var r=root.getBoundingClientRect();var w=r.width||root.clientWidth||0;var h=r.height||root.clientHeight||0;if(h<2&&root.parentElement){var pr=root.parentElement.getBoundingClientRect();w=Math.max(w,pr.width||0);h=Math.max(h,pr.height||0);}if(h<2)h=240;if(w<2)w=2;return{w:w,h:h};}\n` +
       `    var lastW=0,lastH=0;function resize(){var m=measure();var cssW=Math.max(1,Math.floor(m.w));var cssH=Math.max(1,Math.floor(m.h));var dpr=Math.min(dprCap,window.devicePixelRatio||1);var w=Math.max(2,Math.floor(cssW*dpr*renderScale));var h=Math.max(2,Math.floor(cssH*dpr*renderScale));if(w===lastW&&h===lastH)return;lastW=w;lastH=h;canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);gl.uniform2f(uRes,w,h);}resize();\n` +
       `    if(typeof ResizeObserver!=='undefined'){var ro=new ResizeObserver(function(){resize();});ro.observe(root);if(root.parentElement)ro.observe(root.parentElement);}else{window.addEventListener('resize',function(){resize();});}\n` +
@@ -804,7 +797,7 @@ function main() {
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,blur:0.18};\n` +
+      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12};\n` +
       `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
@@ -816,21 +809,20 @@ function main() {
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
       `    function fragSrc(prec){return prec+'\\n'+\n` +
-      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_blur;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
       `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
       `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
       `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
-      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage0=1.0-exp(-wSum*1.25);coverage0=clamp(coverage0,0.0,1.0);float bw=mix(0.02,0.35,clamp(u_blur,0.0,1.0));float coverage=smoothstep(0.5-0.5*bw,0.5+0.5*bw,coverage0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
+      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uBl=gl.getUniformLocation(prog,'u_blur');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
-      `    gl.uniform1f(uBl,(typeof state.blur==='number'&&isFinite(state.blur))?state.blur:0.18);\n` +
       `    function measureSize(){\n` +
       `      // VEV "Embed Anything" commonly runs inside an iframe. The most reliable size source\n` +
       `      // is the iframe element itself (frameElement) and its parent wrapper.\n` +
@@ -997,7 +989,6 @@ function main() {
       if (typeof s.distSpeed === "number") state.distSpeed = s.distSpeed;
       if (typeof s.globalSoftness === "number") state.globalSoftness = s.globalSoftness;
       if (typeof s.softVar === "number") state.softVar = s.softVar;
-      if (typeof s.blur === "number") state.blur = s.blur;
       if (n != null) state.blobCount = n;
     }
 
@@ -1063,8 +1054,6 @@ function main() {
     setOut("globalSoftnessValue", state.globalSoftness.toFixed(2));
     setOut("softVar", String(state.softVar));
     setOut("softVarValue", state.softVar.toFixed(2));
-    setOut("blur", String(state.blur));
-    setOut("blurValue", state.blur.toFixed(2));
     const bgInput = $("bgColor");
     if (bgInput) bgInput.value = state.bgColor;
 
@@ -1194,7 +1183,6 @@ function main() {
     gl.uniform1f(uGrain, state.grain);
     gl.uniform1f(uGlobalSoftness, state.globalSoftness);
     gl.uniform1f(uSoftVar, state.softVar);
-    gl.uniform1f(uBlur, state.blur);
     gl.uniform1f(uDistAmount, state.distAmount);
     gl.uniform1f(uDistScale, state.distScale);
     gl.uniform1f(uDistSpeed, state.distSpeed);
