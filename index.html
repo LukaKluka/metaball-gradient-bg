@@ -109,6 +109,67 @@
 
         <div class="panel__divider"></div>
 
+        <div class="control">
+          <label class="control__label">Glass Effect</label>
+          <div class="control__row control__row--toggle">
+            <input id="glassEnabled" type="checkbox" />
+            <output class="control__value" id="glassEnabledValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="glassShapeType">Glass Shape Type</label>
+          <div class="control__row">
+            <select id="glassShapeType">
+              <option value="1">Vertical Bands</option>
+              <option value="2">Ovals</option>
+            </select>
+            <output class="control__value" id="glassShapeTypeValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="glassAmount">Glass Amount</label>
+          <div class="control__row">
+            <input id="glassAmount" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="glassAmountValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="glassDistortion">Glass Distortion</label>
+          <div class="control__row">
+            <input id="glassDistortion" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="glassDistortionValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="glassHighlight">Glass Highlight</label>
+          <div class="control__row">
+            <input id="glassHighlight" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="glassHighlightValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="glassSoftness">Glass Softness</label>
+          <div class="control__row">
+            <input id="glassSoftness" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="glassSoftnessValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="glassCount">Glass Shape Count</label>
+          <div class="control__row">
+            <input id="glassCount" type="range" min="0" max="10" step="1" />
+            <output class="control__value" id="glassCountValue"></output>
+          </div>
+        </div>
+
+        <div class="panel__divider"></div>
+
         <!-- Background color (same interaction pattern as blobs: color input + swatches) -->
         <div class="blob blob--bg">
           <div class="blob__head">

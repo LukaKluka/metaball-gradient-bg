@@ -122,6 +122,14 @@ body {
   gap: 10px;
 }
 
+.control__row--toggle {
+  grid-template-columns: auto 1fr;
+}
+
+.control__row--toggle .control__value {
+  text-align: left;
+}
+
 .control__actions {
   margin-top: 8px;
   display: flex;
@@ -130,6 +138,29 @@ body {
 
 input[type="range"] {
   width: 100%;
+  accent-color: var(--accent);
+}
+
+select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.90);
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+select:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
   accent-color: var(--accent);
 }
 
