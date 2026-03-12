@@ -194,6 +194,11 @@ uniform float u_glassDistortion;
 uniform float u_glassHighlight;
 uniform float u_glassSoftness;
 uniform int u_glassCount;
+uniform float u_glassRotate;
+uniform float u_glassTwirl;
+uniform float u_glassCirclesAmount;
+uniform float u_glassCirclesScale;
+uniform float u_glassCirclesRotate;
 uniform float u_distAmount;
 uniform float u_distScale;
 uniform float u_distSpeed;
@@ -230,6 +235,11 @@ float fbm(vec2 p) {
     a *= 0.52;
   }
   return v;
+}
+
+mat2 rot2(float a) {
+  float c = cos(a), s = sin(a);
+  return mat2(c, -s, s, c);
 }
 
 void main() {
@@ -306,10 +316,20 @@ void main() {
   float glassMask = 0.0;
   vec2 glassOffset = vec2(0.0);
   float glassLight = 0.0;
+  float glassRings = 0.0;
 
   if (glassOn > 0.5) {
-    float feather = mix(0.010, 0.120, clamp(u_glassSoftness, 0.0, 1.0));
-    vec2 lp = pp; // glass operates on the already-distorted coordinate
+    // Softness needs to be clearly perceptible: it controls edge feather + internal softness cues.
+    float feather = mix(0.006, 0.240, clamp(u_glassSoftness, 0.0, 1.0));
+    vec2 lp = pp;
+    lp = rot2(u_glassRotate) * lp;
+    // Twirl = swirl-like warp so bands/ovals can "twist" architecturally.
+    float tw = clamp(u_glassTwirl, 0.0, 1.0);
+    if (tw > 0.001) {
+      float ang = (0.65 + 1.65 * tw) * (lp.y * 0.9 + length(lp) * 0.55);
+      lp = rot2(ang * tw) * lp;
+    }
+
     const int MAX_GLASS = 10;
 
     for (int j = 0; j < MAX_GLASS; j++) {
@@ -327,7 +347,7 @@ void main() {
 
       if (u_glassShapeType == 1) {
         // Vertical rounded bands
-        float cx = mix(-0.55 * aspect, 0.55 * aspect, r1);
+        float cx = mix(-0.58 * aspect, 0.58 * aspect, r1);
         float halfW = mix(0.06, 0.16, r2) * aspect;
         float halfH = 0.70;
         float rr = halfW * mix(0.25, 0.55, r3);
@@ -337,8 +357,10 @@ void main() {
         m = 1.0 - smoothstep(0.0, feather, sdf);
 
         float nx = clamp((lp.x - cx) / max(1e-5, halfW), -1.0, 1.0);
-        float hl = smoothstep(-0.10, 0.85, nx) * (1.0 - smoothstep(0.55, 1.15, abs(nx)));
-        float sh = smoothstep(-0.85, 0.10, nx) * (1.0 - smoothstep(0.55, 1.15, abs(nx)));
+        // Softness widens the highlight/shadow shaping subtly.
+        float wHL = mix(0.22, 0.38, clamp(u_glassSoftness, 0.0, 1.0));
+        float hl = smoothstep(-0.10, 0.85, nx) * (1.0 - smoothstep(wHL, 1.15, abs(nx)));
+        float sh = smoothstep(-0.85, 0.10, nx) * (1.0 - smoothstep(wHL, 1.15, abs(nx)));
         shade = (hl - sh) * (0.55 + 0.45 * r4);
         dir = normalize(vec2(1.0, mix(0.05, 0.20, r4)));
       } else {
@@ -363,12 +385,26 @@ void main() {
       float mm = m * activeG;
       glassMask += mm;
       glassLight += mm * shade;
-      glassOffset += mm * (dir * (0.55 + 0.45 * r1) + wob * 0.65);
+      // Stronger, more noticeable (but still subtle) distortion; includes per-shape variance.
+      glassOffset += mm * (dir * (0.75 + 0.55 * r1) + wob * (0.55 + 0.85 * r2));
     }
 
     glassMask = clamp(glassMask, 0.0, 1.0);
-    glassOffset *= (clamp(u_glassDistortion, 0.0, 1.0) * 0.045) / max(0.05, float(u_glassCount));
+    glassOffset *= (clamp(u_glassDistortion, 0.0, 1.0) * 0.090) / max(0.25, float(u_glassCount));
     glassLight = clamp(glassLight, -1.0, 1.0);
+
+    // Concentric circles texture (only meaningful when glass is enabled).
+    float ca = clamp(u_glassCirclesAmount, 0.0, 1.0);
+    if (ca > 0.001) {
+      vec2 cp = lp;
+      cp = rot2(u_glassCirclesRotate) * cp;
+      float rs = mix(2.5, 22.0, clamp(u_glassCirclesScale, 0.0, 1.0));
+      float r = length(cp) * rs;
+      float ring = abs(fract(r) - 0.5);
+      float thick = mix(0.06, 0.20, clamp(u_glassSoftness, 0.0, 1.0));
+      float rm = smoothstep(thick, 0.0, ring);
+      glassRings = (rm - 0.5) * ca;
+    }
   }
 
   vec3 col = colBase;
@@ -413,6 +449,9 @@ void main() {
     float hl = clamp(u_glassHighlight, 0.0, 1.0) * 0.065;
     col += glassMix * hl * glassLight * vec3(1.0, 1.0, 1.0);
     col -= glassMix * hl * max(0.0, -glassLight) * vec3(0.85, 0.88, 0.95);
+
+    // Rings texture: subtle structured micro-contrast inside glass only.
+    col += glassMix * 0.035 * glassRings * vec3(1.0, 1.0, 1.0);
   }
 
   // Fine grain to reduce banding (separate from distortion).
@@ -464,6 +503,11 @@ function main() {
     glassHighlight: 0.20,
     glassSoftness: 0.55,
     glassCount: 8,
+    glassRotate: 0,
+    glassTwirl: 0.15,
+    glassCirclesAmount: 0.12,
+    glassCirclesScale: 0.45,
+    glassCirclesRotate: 0,
     bgColor: "#0B0712",
   };
 
@@ -488,6 +532,11 @@ function main() {
         "glassHighlight",
         "glassSoftness",
         "glassCount",
+        "glassRotate",
+        "glassTwirl",
+        "glassCirclesAmount",
+        "glassCirclesScale",
+        "glassCirclesRotate",
       ]) {
         if (typeof s[k] === "number" && Number.isFinite(s[k])) state[k] = s[k];
       }
@@ -592,6 +641,11 @@ function main() {
   const uGlassHighlight = gl.getUniformLocation(program, "u_glassHighlight");
   const uGlassSoftness = gl.getUniformLocation(program, "u_glassSoftness");
   const uGlassCount = gl.getUniformLocation(program, "u_glassCount");
+  const uGlassRotate = gl.getUniformLocation(program, "u_glassRotate");
+  const uGlassTwirl = gl.getUniformLocation(program, "u_glassTwirl");
+  const uGlassCirclesAmount = gl.getUniformLocation(program, "u_glassCirclesAmount");
+  const uGlassCirclesScale = gl.getUniformLocation(program, "u_glassCirclesScale");
+  const uGlassCirclesRotate = gl.getUniformLocation(program, "u_glassCirclesRotate");
   const uDistAmount = gl.getUniformLocation(program, "u_distAmount");
   const uDistScale = gl.getUniformLocation(program, "u_distScale");
   const uDistSpeed = gl.getUniformLocation(program, "u_distSpeed");
@@ -743,11 +797,16 @@ function main() {
 
   bindToggle("glassEnabled", "glassEnabledValue", "glassEnabled");
   bindSelectInt("glassShapeType", "glassShapeTypeValue", "glassShapeType");
+  bindSlider("glassRotate", "glassRotateValue", "glassRotate", (v) => `${Math.round(v)}°`);
+  bindSlider("glassTwirl", "glassTwirlValue", "glassTwirl", (v) => v.toFixed(2));
   bindSlider("glassAmount", "glassAmountValue", "glassAmount", (v) => v.toFixed(2));
   bindSlider("glassDistortion", "glassDistortionValue", "glassDistortion", (v) => v.toFixed(2));
   bindSlider("glassHighlight", "glassHighlightValue", "glassHighlight", (v) => v.toFixed(2));
   bindSlider("glassSoftness", "glassSoftnessValue", "glassSoftness", (v) => v.toFixed(2));
   bindIntSlider("glassCount", "glassCountValue", "glassCount");
+  bindSlider("glassCirclesAmount", "glassCirclesAmountValue", "glassCirclesAmount", (v) => v.toFixed(2));
+  bindSlider("glassCirclesScale", "glassCirclesScaleValue", "glassCirclesScale", (v) => v.toFixed(2));
+  bindSlider("glassCirclesRotate", "glassCirclesRotateValue", "glassCirclesRotate", (v) => `${Math.round(v)}°`);
 
   const blobControlsEl = $("blobControls");
   const bgColorEl = $("bgColor");
@@ -872,6 +931,11 @@ function main() {
         glassHighlight: state.glassHighlight,
         glassSoftness: state.glassSoftness,
         glassCount: state.glassCount,
+        glassRotate: state.glassRotate,
+        glassTwirl: state.glassTwirl,
+        glassCirclesAmount: state.glassCirclesAmount,
+        glassCirclesScale: state.glassCirclesScale,
+        glassCirclesRotate: state.glassCirclesRotate,
       },
       colors: {
         background: state.bgColor,
@@ -930,7 +994,7 @@ function main() {
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35,glassEnabled:1,glassShapeType:1,glassAmount:0.18,glassDistortion:0.18,glassHighlight:0.20,glassSoftness:0.55,glassCount:8};\n` +
+      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35,glassEnabled:1,glassShapeType:1,glassAmount:0.18,glassDistortion:0.18,glassHighlight:0.20,glassSoftness:0.55,glassCount:8,glassRotate:0,glassTwirl:0.15,glassCirclesAmount:0.12,glassCirclesScale:0.45,glassCirclesRotate:0};\n` +
       `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
@@ -942,7 +1006,7 @@ function main() {
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
       `    function fragSrc(prec){return prec+'\\n'+\n` +
-      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_glassEnabled;uniform int u_glassShapeType;uniform float u_glassAmount;uniform float u_glassDistortion;uniform float u_glassHighlight;uniform float u_glassSoftness;uniform int u_glassCount;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_glassEnabled;uniform int u_glassShapeType;uniform float u_glassAmount;uniform float u_glassDistortion;uniform float u_glassHighlight;uniform float u_glassSoftness;uniform int u_glassCount;uniform float u_glassRotate;uniform float u_glassTwirl;uniform float u_glassCirclesAmount;uniform float u_glassCirclesScale;uniform float u_glassCirclesRotate;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
       `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
       `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
       `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
@@ -950,7 +1014,7 @@ function main() {
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uGE=gl.getUniformLocation(prog,'u_glassEnabled');var uGST=gl.getUniformLocation(prog,'u_glassShapeType');var uGA=gl.getUniformLocation(prog,'u_glassAmount');var uGD=gl.getUniformLocation(prog,'u_glassDistortion');var uGH=gl.getUniformLocation(prog,'u_glassHighlight');var uGSof=gl.getUniformLocation(prog,'u_glassSoftness');var uGC=gl.getUniformLocation(prog,'u_glassCount');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uGE=gl.getUniformLocation(prog,'u_glassEnabled');var uGST=gl.getUniformLocation(prog,'u_glassShapeType');var uGA=gl.getUniformLocation(prog,'u_glassAmount');var uGD=gl.getUniformLocation(prog,'u_glassDistortion');var uGH=gl.getUniformLocation(prog,'u_glassHighlight');var uGSof=gl.getUniformLocation(prog,'u_glassSoftness');var uGC=gl.getUniformLocation(prog,'u_glassCount');var uGRot=gl.getUniformLocation(prog,'u_glassRotate');var uGTw=gl.getUniformLocation(prog,'u_glassTwirl');var uGCA=gl.getUniformLocation(prog,'u_glassCirclesAmount');var uGCS=gl.getUniformLocation(prog,'u_glassCirclesScale');var uGCR=gl.getUniformLocation(prog,'u_glassCirclesRotate');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
@@ -966,7 +1030,7 @@ function main() {
       `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
       `    function start(){if(running)return;running=true;raf=requestAnimationFrame(frame);} \n` +
       `    document.addEventListener('visibilitychange',function(){if(document.hidden)stop();else start();});\n` +
-      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1f(uGE,(state.glassEnabled||0)>=0.5?1.0:0.0);gl.uniform1i(uGST,clamp(state.glassShapeType|0,1,2));gl.uniform1f(uGA,clamp(state.glassAmount||0,0,1));gl.uniform1f(uGD,clamp(state.glassDistortion||0,0,1));gl.uniform1f(uGH,clamp(state.glassHighlight||0,0,1));gl.uniform1f(uGSof,clamp(state.glassSoftness||0,0,1));gl.uniform1i(uGC,clamp(state.glassCount|0,0,10));gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
+      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1f(uGE,(state.glassEnabled||0)>=0.5?1.0:0.0);gl.uniform1i(uGST,clamp(state.glassShapeType|0,1,2));gl.uniform1f(uGA,clamp(state.glassAmount||0,0,1));gl.uniform1f(uGD,clamp(state.glassDistortion||0,0,1));gl.uniform1f(uGH,clamp(state.glassHighlight||0,0,1));gl.uniform1f(uGSof,clamp(state.glassSoftness||0,0,1));gl.uniform1i(uGC,clamp(state.glassCount|0,0,10));gl.uniform1f(uGRot,(state.glassRotate||0)*Math.PI/180);gl.uniform1f(uGTw,clamp(state.glassTwirl||0,0,1));gl.uniform1f(uGCA,clamp(state.glassCirclesAmount||0,0,1));gl.uniform1f(uGCS,clamp(state.glassCirclesScale||0,0,1));gl.uniform1f(uGCR,(state.glassCirclesRotate||0)*Math.PI/180);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
@@ -1013,7 +1077,7 @@ function main() {
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35,glassEnabled:1,glassShapeType:1,glassAmount:0.18,glassDistortion:0.18,glassHighlight:0.20,glassSoftness:0.55,glassCount:8};\n` +
+      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35,glassEnabled:1,glassShapeType:1,glassAmount:0.18,glassDistortion:0.18,glassHighlight:0.20,glassSoftness:0.55,glassCount:8,glassRotate:0,glassTwirl:0.15,glassCirclesAmount:0.12,glassCirclesScale:0.45,glassCirclesRotate:0};\n` +
       `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
@@ -1025,7 +1089,7 @@ function main() {
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
       `    function fragSrc(prec){return prec+'\\n'+\n` +
-      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_glassEnabled;uniform int u_glassShapeType;uniform float u_glassAmount;uniform float u_glassDistortion;uniform float u_glassHighlight;uniform float u_glassSoftness;uniform int u_glassCount;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_glassEnabled;uniform int u_glassShapeType;uniform float u_glassAmount;uniform float u_glassDistortion;uniform float u_glassHighlight;uniform float u_glassSoftness;uniform int u_glassCount;uniform float u_glassRotate;uniform float u_glassTwirl;uniform float u_glassCirclesAmount;uniform float u_glassCirclesScale;uniform float u_glassCirclesRotate;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
       `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
       `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
       `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
@@ -1033,7 +1097,7 @@ function main() {
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uGE=gl.getUniformLocation(prog,'u_glassEnabled');var uGST=gl.getUniformLocation(prog,'u_glassShapeType');var uGA=gl.getUniformLocation(prog,'u_glassAmount');var uGD=gl.getUniformLocation(prog,'u_glassDistortion');var uGH=gl.getUniformLocation(prog,'u_glassHighlight');var uGSof=gl.getUniformLocation(prog,'u_glassSoftness');var uGC=gl.getUniformLocation(prog,'u_glassCount');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uGE=gl.getUniformLocation(prog,'u_glassEnabled');var uGST=gl.getUniformLocation(prog,'u_glassShapeType');var uGA=gl.getUniformLocation(prog,'u_glassAmount');var uGD=gl.getUniformLocation(prog,'u_glassDistortion');var uGH=gl.getUniformLocation(prog,'u_glassHighlight');var uGSof=gl.getUniformLocation(prog,'u_glassSoftness');var uGC=gl.getUniformLocation(prog,'u_glassCount');var uGRot=gl.getUniformLocation(prog,'u_glassRotate');var uGTw=gl.getUniformLocation(prog,'u_glassTwirl');var uGCA=gl.getUniformLocation(prog,'u_glassCirclesAmount');var uGCS=gl.getUniformLocation(prog,'u_glassCirclesScale');var uGCR=gl.getUniformLocation(prog,'u_glassCirclesRotate');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
@@ -1112,7 +1176,7 @@ function main() {
       `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
       `    function start(){if(running)return;running=true;raf=requestAnimationFrame(frame);} \n` +
       `    document.addEventListener('visibilitychange',function(){if(document.hidden)stop();else start();});\n` +
-      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1f(uGE,(state.glassEnabled||0)>=0.5?1.0:0.0);gl.uniform1i(uGST,clamp(state.glassShapeType|0,1,2));gl.uniform1f(uGA,clamp(state.glassAmount||0,0,1));gl.uniform1f(uGD,clamp(state.glassDistortion||0,0,1));gl.uniform1f(uGH,clamp(state.glassHighlight||0,0,1));gl.uniform1f(uGSof,clamp(state.glassSoftness||0,0,1));gl.uniform1i(uGC,clamp(state.glassCount|0,0,10));gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
+      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1f(uGE,(state.glassEnabled||0)>=0.5?1.0:0.0);gl.uniform1i(uGST,clamp(state.glassShapeType|0,1,2));gl.uniform1f(uGA,clamp(state.glassAmount||0,0,1));gl.uniform1f(uGD,clamp(state.glassDistortion||0,0,1));gl.uniform1f(uGH,clamp(state.glassHighlight||0,0,1));gl.uniform1f(uGSof,clamp(state.glassSoftness||0,0,1));gl.uniform1i(uGC,clamp(state.glassCount|0,0,10));gl.uniform1f(uGRot,(state.glassRotate||0)*Math.PI/180);gl.uniform1f(uGTw,clamp(state.glassTwirl||0,0,1));gl.uniform1f(uGCA,clamp(state.glassCirclesAmount||0,0,1));gl.uniform1f(uGCS,clamp(state.glassCirclesScale||0,0,1));gl.uniform1f(uGCR,(state.glassCirclesRotate||0)*Math.PI/180);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
@@ -1217,6 +1281,11 @@ function main() {
       if (typeof s.glassHighlight === "number") state.glassHighlight = s.glassHighlight;
       if (typeof s.glassSoftness === "number") state.glassSoftness = s.glassSoftness;
       if (typeof s.glassCount === "number") state.glassCount = s.glassCount;
+      if (typeof s.glassRotate === "number") state.glassRotate = s.glassRotate;
+      if (typeof s.glassTwirl === "number") state.glassTwirl = s.glassTwirl;
+      if (typeof s.glassCirclesAmount === "number") state.glassCirclesAmount = s.glassCirclesAmount;
+      if (typeof s.glassCirclesScale === "number") state.glassCirclesScale = s.glassCirclesScale;
+      if (typeof s.glassCirclesRotate === "number") state.glassCirclesRotate = s.glassCirclesRotate;
       if (n != null) state.blobCount = n;
     }
 
@@ -1312,6 +1381,16 @@ function main() {
     setOut("glassSoftnessValue", state.glassSoftness.toFixed(2));
     setOut("glassCount", String(state.glassCount | 0));
     setOut("glassCountValue", String(state.glassCount | 0));
+    setOut("glassRotate", String(state.glassRotate));
+    setOut("glassRotateValue", `${Math.round(state.glassRotate)}°`);
+    setOut("glassTwirl", String(state.glassTwirl));
+    setOut("glassTwirlValue", state.glassTwirl.toFixed(2));
+    setOut("glassCirclesAmount", String(state.glassCirclesAmount));
+    setOut("glassCirclesAmountValue", state.glassCirclesAmount.toFixed(2));
+    setOut("glassCirclesScale", String(state.glassCirclesScale));
+    setOut("glassCirclesScaleValue", state.glassCirclesScale.toFixed(2));
+    setOut("glassCirclesRotate", String(state.glassCirclesRotate));
+    setOut("glassCirclesRotateValue", `${Math.round(state.glassCirclesRotate)}°`);
     const bgInput = $("bgColor");
     if (bgInput) bgInput.value = state.bgColor;
 
@@ -1484,6 +1563,11 @@ function main() {
     gl.uniform1f(uGlassHighlight, state.glassHighlight);
     gl.uniform1f(uGlassSoftness, state.glassSoftness);
     gl.uniform1i(uGlassCount, clamp(state.glassCount | 0, 0, 10));
+    gl.uniform1f(uGlassRotate, (state.glassRotate * Math.PI) / 180);
+    gl.uniform1f(uGlassTwirl, state.glassTwirl);
+    gl.uniform1f(uGlassCirclesAmount, state.glassCirclesAmount);
+    gl.uniform1f(uGlassCirclesScale, state.glassCirclesScale);
+    gl.uniform1f(uGlassCirclesRotate, (state.glassCirclesRotate * Math.PI) / 180);
     gl.uniform1f(uDistAmount, state.distAmount);
     gl.uniform1f(uDistScale, state.distScale);
     gl.uniform1f(uDistSpeed, state.distSpeed);
