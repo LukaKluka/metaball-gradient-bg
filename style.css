@@ -122,6 +122,12 @@ body {
   gap: 10px;
 }
 
+.control__actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 input[type="range"] {
   width: 100%;
   accent-color: var(--accent);

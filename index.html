@@ -80,6 +80,35 @@
 
         <div class="panel__divider"></div>
 
+        <div class="control">
+          <label class="control__label" for="edgeBlurMin">Edge Blur Min</label>
+          <div class="control__row">
+            <input id="edgeBlurMin" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="edgeBlurMinValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="edgeBlurMax">Edge Blur Max</label>
+          <div class="control__row">
+            <input id="edgeBlurMax" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="edgeBlurMaxValue"></output>
+          </div>
+        </div>
+
+        <div class="control">
+          <label class="control__label" for="edgeBlurSpeed">Edge Blur Randomize Speed</label>
+          <div class="control__row">
+            <input id="edgeBlurSpeed" type="range" min="0" max="1" step="0.01" />
+            <output class="control__value" id="edgeBlurSpeedValue"></output>
+          </div>
+          <div class="control__actions">
+            <button class="btn btn--ghost" id="edgeBlurRandomize" type="button">Randomize now</button>
+          </div>
+        </div>
+
+        <div class="panel__divider"></div>
+
         <!-- Background color (same interaction pattern as blobs: color input + swatches) -->
         <div class="blob blob--bg">
           <div class="blob__head">
