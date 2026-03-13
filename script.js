@@ -187,26 +187,6 @@ uniform float u_softVar;
 uniform float u_edgeBlurMin;
 uniform float u_edgeBlurMax;
 uniform float u_edgeBlurMix;
-uniform int u_overlayMode;
-uniform int u_glassShapeType;
-uniform float u_glassAmount;
-uniform float u_glassDistortion;
-uniform float u_glassHighlight;
-uniform float u_glassSoftness;
-uniform int u_glassCount;
-uniform int u_glassBandsCount;
-uniform float u_glassRotate;
-uniform float u_glassTwirl;
-uniform float u_glassCirclesAmount;
-uniform float u_glassCirclesScale;
-uniform float u_glassCirclesRotate;
-uniform float u_glassCirclesThickness;
-uniform float u_glassCirclesStretch;
-uniform float u_waveAmount;
-uniform float u_waveScale;
-uniform float u_waveSpeed;
-uniform float u_waveAngle;
-uniform float u_waveDetail;
 uniform float u_distAmount;
 uniform float u_distScale;
 uniform float u_distSpeed;
@@ -245,11 +225,6 @@ float fbm(vec2 p) {
   return v;
 }
 
-mat2 rot2(float a) {
-  float c = cos(a), s = sin(a);
-  return mat2(c, -s, s, c);
-}
-
 void main() {
   float aspect = u_resolution.x / max(1.0, u_resolution.y);
 
@@ -268,7 +243,6 @@ void main() {
   vec2 dvec = (dn - 0.5) * (u_distAmount * 0.22);
   vec2 pp = p + dvec;
 
-  // --- Metaball field (base layer) ---
   vec3 colorSum = vec3(0.0);
   float wSum = 0.0;
 
@@ -293,7 +267,7 @@ void main() {
     float sigma = r * soft;
     float w = exp(-(dist * dist) / (2.0 * sigma * sigma));
 
-    // Edge Blur: adjusts edge softness without changing sigma.
+    // Edge Blur (new): adjusts edge softness without changing sigma.
     float seed01 = clamp(u_blobSoftSeed[i] * 0.5 + 0.5, 0.0, 1.0);
     float mix01 = clamp(u_edgeBlurMix * 0.65 + seed01 * 0.35, 0.0, 1.0);
     float blur01 = mix(u_edgeBlurMin, u_edgeBlurMax, mix01);
@@ -316,221 +290,8 @@ void main() {
   // Subtle vignette (helps text readability and premium depth).
   float v = smoothstep(0.95, 0.20, length(p));
 
-  vec3 colBase = mix(base, blobCol, coverage);
-  colBase *= mix(0.88, 1.05, v);
-
-  // --- Overlay system ---
-  // u_overlayMode: 0 None, 1 Fake Glass, 2 Wave Warp
-  float glassMask = 0.0;
-  vec2 glassOffset = vec2(0.0);
-  float glassLight = 0.0;
-  float glassRings = 0.0;
-
-  if (u_overlayMode == 1) {
-    // Softness needs to be clearly perceptible: it controls edge feather + internal softness cues.
-    float feather = mix(0.006, 0.240, clamp(u_glassSoftness, 0.0, 1.0));
-    vec2 lp = pp;
-    lp = rot2(u_glassRotate) * lp;
-    // Twirl = swirl-like warp so bands/ovals can "twist" architecturally.
-    float tw = clamp(u_glassTwirl, 0.0, 1.0);
-    if (tw > 0.001) {
-      float ang = (0.65 + 1.65 * tw) * (lp.y * 0.9 + length(lp) * 0.55);
-      lp = rot2(ang * tw) * lp;
-    }
-
-    if (u_glassShapeType == 1) {
-      // --- Bands: procedural stripe field (supports high counts cheaply) ---
-      float cnt = clamp(float(u_glassBandsCount), 6.0, 80.0);
-      float ux = lp.x / max(1e-5, aspect) + 0.5;
-      float x = ux * cnt;
-      float cell = floor(x);
-      float r1 = hash12(vec2(cell, 1.23));
-      float r2 = hash12(vec2(cell, 7.77));
-      // Jitter band spacing slightly.
-      float fx = fract(x + (r1 - 0.5) * 0.18) - 0.5;
-      float w = mix(0.10, 0.44, r2); // width in "cell fraction"
-      float sdf = abs(fx) - w * 0.5;
-      float m = 1.0 - smoothstep(0.0, feather, sdf);
-
-      // Band highlight/shadow (graphic): one bright edge, one dark edge.
-      float nx = clamp(fx / max(1e-4, w * 0.5), -1.0, 1.0);
-      float edgeW = mix(0.18, 0.48, clamp(u_glassSoftness, 0.0, 1.0));
-      float hl = smoothstep(-0.10, 0.95, nx) * (1.0 - smoothstep(edgeW, 1.15, abs(nx)));
-      float sh = smoothstep(-0.95, 0.10, nx) * (1.0 - smoothstep(edgeW, 1.15, abs(nx)));
-      float shade = (hl - sh) * (0.55 + 0.45 * r1);
-
-      vec2 dir = normalize(vec2(1.0, 0.06));
-      vec2 wob = vec2(fbm(lp * 1.10 + cell * 0.37 + t * 0.05), fbm(lp * 1.10 + cell * 0.19 - t * 0.04)) - 0.5;
-
-      glassMask = clamp(m, 0.0, 1.0);
-      glassLight = clamp(shade, -1.0, 1.0) * glassMask;
-      glassOffset = glassMask * (dir * (0.90 + 0.80 * r2) + wob * (0.45 + 0.55 * r1));
-      glassOffset *= clamp(u_glassDistortion, 0.0, 1.0) * 0.060;
-    } else if (u_glassShapeType == 2) {
-      // --- Ovals: limited to 10 for perf ---
-      const int MAX_GLASS = 10;
-      for (int j = 0; j < MAX_GLASS; j++) {
-        float activeG = step(float(j), float(u_glassCount - 1));
-        float jj = float(j);
-
-        float r1 = hash12(vec2(jj * 13.17, 1.23));
-        float r2 = hash12(vec2(jj * 17.71, 7.77));
-        float r3 = hash12(vec2(jj * 23.91, 3.11));
-        float r4 = hash12(vec2(jj * 29.77, 9.41));
-
-        vec2 c2 = vec2(mix(-0.45 * aspect, 0.45 * aspect, r1), mix(-0.35, 0.35, r2));
-        vec2 sz = vec2(mix(0.18, 0.46, r3) * aspect, mix(0.12, 0.34, r4));
-        vec2 d = (lp - c2) / max(vec2(1e-4), sz);
-        float distE = length(d);
-        float m = 1.0 - smoothstep(1.0 - feather * 1.35, 1.0, distE);
-
-        float ang = (r3 * 6.2831853);
-        vec2 dir = normalize(vec2(cos(ang), sin(ang)));
-        float shade = clamp(dot(d, dir), -1.0, 1.0) * (0.55 + 0.45 * r2);
-
-        vec2 wob = vec2(
-          fbm(lp * 1.25 + jj * 9.7 + t * 0.06),
-          fbm(lp * 1.25 + jj * 6.1 - t * 0.05)
-        ) - 0.5;
-
-        float mm = m * activeG;
-        glassMask += mm;
-        glassLight += mm * shade;
-        glassOffset += mm * (dir * (0.75 + 0.55 * r1) + wob * (0.55 + 0.85 * r2));
-      }
-
-      glassMask = clamp(glassMask, 0.0, 1.0);
-      glassOffset *= (clamp(u_glassDistortion, 0.0, 1.0) * 0.090) / max(0.25, float(u_glassCount));
-      glassLight = clamp(glassLight, -1.0, 1.0);
-    } else {
-      // --- Circles: ripple rings style (reference-like) ---
-      float ca = clamp(u_glassCirclesAmount, 0.0, 1.0);
-      vec2 cp = lp;
-      cp = rot2(u_glassCirclesRotate) * cp;
-      cp.x *= mix(1.0, 2.35, clamp(u_glassCirclesStretch, 0.0, 1.0));
-
-      float rs = mix(3.5, 28.0, clamp(u_glassCirclesScale, 0.0, 1.0));
-      float rr = length(cp) * rs;
-      rr += (fbm(cp * 2.2 + t * 0.05) - 0.5) * (0.85 + 1.10 * clamp(u_glassDistortion, 0.0, 1.0));
-
-      float th = mix(0.28, 0.05, clamp(u_glassCirclesThickness, 0.0, 1.0));
-      float wave = sin(rr * 6.2831853);
-      float ring = 1.0 - smoothstep(0.0, th, abs(wave));
-      float alt = cos(rr * 6.2831853);
-
-      vec2 dir = normalize(cp + vec2(1e-4));
-      vec2 tang = vec2(-dir.y, dir.x);
-
-      glassMask = 1.0;
-      glassLight = (alt) * (0.65 + 0.35 * ring) * ca;
-      glassOffset = (dir * (0.65 + 0.60 * ring) + tang * (0.10 + 0.25 * ring)) * (0.040 + 0.060 * ca);
-      glassOffset *= clamp(u_glassDistortion, 0.0, 1.0);
-      glassRings = (ring - 0.5) * ca;
-    }
-  }
-
-  vec3 col = colBase;
-  float glassMix = (u_overlayMode == 1) ? (clamp(u_glassAmount, 0.0, 1.0) * glassMask) : 0.0;
-
-  if (glassMix > 0.0005) {
-    // Recompute metaball field once with a refracted coordinate (no extra render pass).
-    vec2 pp2 = pp + glassOffset;
-
-    vec3 colorSum2 = vec3(0.0);
-    float wSum2 = 0.0;
-
-    for (int i = 0; i < ${MAX_BLOBS}; i++) {
-      float active = step(float(i), float(u_blobCount - 1));
-      vec2 c = u_blob[i].xy - 0.5;
-      c.x *= aspect;
-      float localN = fbm((pp2 - c) * (sc * 0.85) + u_blob[i].w * 9.7 + t * 0.10);
-      float warp = 1.0 + (localN - 0.5) * (u_distAmount * 0.35);
-      float r = max(0.0001, u_blob[i].z);
-      float dist = length(pp2 - c) * warp;
-      float soft = clamp(u_globalSoftness + u_softVar * u_blobSoftSeed[i], 0.35, 2.2);
-      float sigma = r * soft;
-      float w = exp(-(dist * dist) / (2.0 * sigma * sigma));
-      float seed01 = clamp(u_blobSoftSeed[i] * 0.5 + 0.5, 0.0, 1.0);
-      float mix01 = clamp(u_edgeBlurMix * 0.65 + seed01 * 0.35, 0.0, 1.0);
-      float blur01 = mix(u_edgeBlurMin, u_edgeBlurMax, mix01);
-      w = pow(w, 1.0 / (1.0 + blur01 * 2.0));
-      float w2 = w * w;
-      colorSum2 += u_blobColor[i] * (w2 * active);
-      wSum2 += w2 * active;
-    }
-
-    vec3 blobCol2 = colorSum2 / max(1e-5, wSum2);
-    float coverage2 = 1.0 - exp(-wSum2 * 1.25);
-    coverage2 = clamp(coverage2, 0.0, 1.0);
-    vec3 colRefract = mix(base, blobCol2, coverage2);
-    colRefract *= mix(0.88, 1.05, v);
-
-    col = mix(colBase, colRefract, glassMix);
-
-    // Highlight / shadow shaping (graphic glass, not photoreal).
-    float hl = clamp(u_glassHighlight, 0.0, 1.0) * 0.065;
-    col += glassMix * hl * glassLight * vec3(1.0, 1.0, 1.0);
-    col -= glassMix * hl * max(0.0, -glassLight) * vec3(0.85, 0.88, 0.95);
-
-    // Rings texture: subtle structured micro-contrast inside glass only.
-    col += glassMix * 0.050 * glassRings * vec3(1.0, 1.0, 1.0);
-  }
-
-  // Wave Warp overlay: global smooth warp + optional ridge highlight.
-  if (u_overlayMode == 2) {
-    float a = clamp(u_waveAmount, 0.0, 1.0);
-    float scw = mix(0.8, 6.5, clamp(u_waveScale, 0.0, 1.0));
-    float spd = mix(0.05, 0.65, clamp(u_waveSpeed, 0.0, 1.0));
-    float ang = u_waveAngle;
-    vec2 dir = normalize(vec2(cos(ang), sin(ang)));
-    vec2 dir2 = vec2(-dir.y, dir.x);
-    float wt = u_time * spd;
-
-    float w1 = sin((dot(pp, dir) * scw) + wt * 1.35);
-    float w2 = sin((dot(pp, dir2) * (scw * 0.83)) - wt * 0.95);
-    float n = fbm(pp * (scw * 0.55) + vec2(wt * 0.22, -wt * 0.18)) - 0.5;
-    float det = mix(0.0, 1.0, clamp(u_waveDetail, 0.0, 1.0));
-    float w = 0.62 * w1 + 0.38 * w2 + n * (0.55 * det);
-
-    // Make the warp visibly distinct when enabled, while still allowing subtle values.
-    vec2 wOff = (dir * (w * 1.25) + dir2 * (n * 1.05)) * (0.090 * a);
-    vec2 ppw = pp + wOff;
-
-    // Recompute metaball field once at warped coordinate.
-    vec3 colorSumW = vec3(0.0);
-    float wSumW = 0.0;
-    for (int i = 0; i < ${MAX_BLOBS}; i++) {
-      float active = step(float(i), float(u_blobCount - 1));
-      vec2 c = u_blob[i].xy - 0.5;
-      c.x *= aspect;
-      float localN = fbm((ppw - c) * (sc * 0.85) + u_blob[i].w * 9.7 + t * 0.10);
-      float warp = 1.0 + (localN - 0.5) * (u_distAmount * 0.35);
-      float r = max(0.0001, u_blob[i].z);
-      float dist = length(ppw - c) * warp;
-      float soft = clamp(u_globalSoftness + u_softVar * u_blobSoftSeed[i], 0.35, 2.2);
-      float sigma = r * soft;
-      float ww = exp(-(dist * dist) / (2.0 * sigma * sigma));
-      float seed01 = clamp(u_blobSoftSeed[i] * 0.5 + 0.5, 0.0, 1.0);
-      float mix01 = clamp(u_edgeBlurMix * 0.65 + seed01 * 0.35, 0.0, 1.0);
-      float blur01 = mix(u_edgeBlurMin, u_edgeBlurMax, mix01);
-      ww = pow(ww, 1.0 / (1.0 + blur01 * 2.0));
-      float ww2 = ww * ww;
-      colorSumW += u_blobColor[i] * (ww2 * active);
-      wSumW += ww2 * active;
-    }
-
-    vec3 blobColW = colorSumW / max(1e-5, wSumW);
-    float covW = 1.0 - exp(-wSumW * 1.25);
-    covW = clamp(covW, 0.0, 1.0);
-    vec3 colWarp = mix(base, blobColW, covW);
-    colWarp *= mix(0.88, 1.05, v);
-
-    col = mix(colBase, colWarp, a);
-
-    // Subtle ridge highlight (keeps it "graphic").
-    float ridge = smoothstep(0.92, 1.0, abs(w1));
-    col += a * 0.020 * ridge * vec3(1.0);
-  }
+  vec3 col = mix(base, blobCol, coverage);
+  col *= mix(0.88, 1.05, v);
 
   // Fine grain to reduce banding (separate from distortion).
   float g = hash12(gl_FragCoord.xy + vec2(u_time * 0.05, 0.0)) - 0.5;
@@ -574,26 +335,6 @@ function main() {
     edgeBlurMin: 0.0,
     edgeBlurMax: 0.55,
     edgeBlurSpeed: 0.35,
-    overlayMode: 1,
-    glassShapeType: 1,
-    glassAmount: 0.18,
-    glassDistortion: 0.18,
-    glassHighlight: 0.20,
-    glassSoftness: 0.55,
-    glassCount: 8,
-    glassBandsCount: 42,
-    glassRotate: 0,
-    glassTwirl: 0.15,
-    glassCirclesAmount: 0.12,
-    glassCirclesScale: 0.45,
-    glassCirclesRotate: 0,
-    glassCirclesThickness: 0.55,
-    glassCirclesStretch: 0.25,
-    waveAmount: 0.18,
-    waveScale: 0.45,
-    waveSpeed: 0.22,
-    waveAngle: 0,
-    waveDetail: 0.45,
     bgColor: "#0B0712",
   };
 
@@ -611,26 +352,6 @@ function main() {
         "edgeBlurMin",
         "edgeBlurMax",
         "edgeBlurSpeed",
-        "overlayMode",
-        "glassShapeType",
-        "glassAmount",
-        "glassDistortion",
-        "glassHighlight",
-        "glassSoftness",
-        "glassCount",
-        "glassBandsCount",
-        "glassRotate",
-        "glassTwirl",
-        "glassCirclesAmount",
-        "glassCirclesScale",
-        "glassCirclesRotate",
-        "glassCirclesThickness",
-        "glassCirclesStretch",
-        "waveAmount",
-        "waveScale",
-        "waveSpeed",
-        "waveAngle",
-        "waveDetail",
       ]) {
         if (typeof s[k] === "number" && Number.isFinite(s[k])) state[k] = s[k];
       }
@@ -728,26 +449,6 @@ function main() {
   const uEdgeBlurMin = gl.getUniformLocation(program, "u_edgeBlurMin");
   const uEdgeBlurMax = gl.getUniformLocation(program, "u_edgeBlurMax");
   const uEdgeBlurMix = gl.getUniformLocation(program, "u_edgeBlurMix");
-  const uOverlayMode = gl.getUniformLocation(program, "u_overlayMode");
-  const uGlassShapeType = gl.getUniformLocation(program, "u_glassShapeType");
-  const uGlassAmount = gl.getUniformLocation(program, "u_glassAmount");
-  const uGlassDistortion = gl.getUniformLocation(program, "u_glassDistortion");
-  const uGlassHighlight = gl.getUniformLocation(program, "u_glassHighlight");
-  const uGlassSoftness = gl.getUniformLocation(program, "u_glassSoftness");
-  const uGlassCount = gl.getUniformLocation(program, "u_glassCount");
-  const uGlassBandsCount = gl.getUniformLocation(program, "u_glassBandsCount");
-  const uGlassRotate = gl.getUniformLocation(program, "u_glassRotate");
-  const uGlassTwirl = gl.getUniformLocation(program, "u_glassTwirl");
-  const uGlassCirclesAmount = gl.getUniformLocation(program, "u_glassCirclesAmount");
-  const uGlassCirclesScale = gl.getUniformLocation(program, "u_glassCirclesScale");
-  const uGlassCirclesRotate = gl.getUniformLocation(program, "u_glassCirclesRotate");
-  const uGlassCirclesThickness = gl.getUniformLocation(program, "u_glassCirclesThickness");
-  const uGlassCirclesStretch = gl.getUniformLocation(program, "u_glassCirclesStretch");
-  const uWaveAmount = gl.getUniformLocation(program, "u_waveAmount");
-  const uWaveScale = gl.getUniformLocation(program, "u_waveScale");
-  const uWaveSpeed = gl.getUniformLocation(program, "u_waveSpeed");
-  const uWaveAngle = gl.getUniformLocation(program, "u_waveAngle");
-  const uWaveDetail = gl.getUniformLocation(program, "u_waveDetail");
   const uDistAmount = gl.getUniformLocation(program, "u_distAmount");
   const uDistScale = gl.getUniformLocation(program, "u_distScale");
   const uDistSpeed = gl.getUniformLocation(program, "u_distSpeed");
@@ -846,72 +547,6 @@ function main() {
     });
   }
 
-  function bindToggle(id, valueId, key) {
-    const el = $(id);
-    const out = $(valueId);
-    if (!el || !out) return;
-    const set = (v) => {
-      const on = !!v;
-      state[key] = on ? 1 : 0;
-      el.checked = on;
-      out.value = on ? "On" : "Off";
-    };
-    set(state[key] >= 0.5);
-    el.addEventListener("change", () => {
-      set(el.checked);
-      updateEmbedCode();
-    });
-  }
-
-  function bindSelectInt(id, valueId, key) {
-    const el = $(id);
-    const out = $(valueId);
-    if (!el || !out) return;
-    el.value = String(state[key]);
-    out.value = el.options[el.selectedIndex]?.textContent || String(state[key]);
-    el.addEventListener("change", () => {
-      const v = parseInt(el.value, 10);
-      state[key] = Number.isFinite(v) ? v : state[key];
-      out.value = el.options[el.selectedIndex]?.textContent || String(state[key]);
-      updateEmbedCode();
-    });
-  }
-
-  function bindSelectIntWithLabel(id, valueId, key) {
-    const el = $(id);
-    const out = $(valueId);
-    if (!el || !out) return;
-    const update = () => {
-      const v = parseInt(el.value, 10);
-      state[key] = Number.isFinite(v) ? v : state[key];
-      out.value = el.options[el.selectedIndex]?.textContent || String(state[key]);
-      updateEmbedCode();
-    };
-    el.value = String(state[key]);
-    out.value = el.options[el.selectedIndex]?.textContent || String(state[key]);
-    el.addEventListener("change", update);
-  }
-
-  function updateGlassControlVisibility() {
-    const t = state.glassShapeType | 0;
-    const bands = $("glassBandsControls");
-    const ovals = $("glassOvalsControls");
-    const circles = $("glassCirclesControls");
-    if (bands) bands.hidden = t !== 1;
-    if (ovals) ovals.hidden = t !== 2;
-    if (circles) circles.hidden = t !== 3;
-  }
-
-  function updateOverlayControlVisibility() {
-    const m = state.overlayMode | 0;
-    const fake = $("fakeGlassControls");
-    const wave = $("waveWarpControls");
-    if (fake) fake.hidden = m !== 1;
-    if (wave) wave.hidden = m !== 2;
-    // Also keep glass sub-controls tidy.
-    if (m === 1) updateGlassControlVisibility();
-  }
-
   if (panel && panelToggle && panelBody) {
     panelToggle.addEventListener("click", () => {
       const isHidden = panel.classList.toggle("is-hidden");
@@ -931,33 +566,6 @@ function main() {
   bindSlider("edgeBlurMin", "edgeBlurMinValue", "edgeBlurMin", (v) => v.toFixed(2));
   bindSlider("edgeBlurMax", "edgeBlurMaxValue", "edgeBlurMax", (v) => v.toFixed(2));
   bindSlider("edgeBlurSpeed", "edgeBlurSpeedValue", "edgeBlurSpeed", (v) => v.toFixed(2));
-
-  bindSelectIntWithLabel("overlayMode", "overlayModeValue", "overlayMode");
-  bindSelectIntWithLabel("glassShapeType", "glassShapeTypeValue", "glassShapeType");
-  updateOverlayControlVisibility();
-  const ovSel = $("overlayMode");
-  if (ovSel) ovSel.addEventListener("change", updateOverlayControlVisibility);
-  const gstSel = $("glassShapeType");
-  if (gstSel) gstSel.addEventListener("change", updateGlassControlVisibility);
-  bindSlider("glassRotate", "glassRotateValue", "glassRotate", (v) => `${Math.round(v)}°`);
-  bindSlider("glassTwirl", "glassTwirlValue", "glassTwirl", (v) => v.toFixed(2));
-  bindSlider("glassAmount", "glassAmountValue", "glassAmount", (v) => v.toFixed(2));
-  bindSlider("glassDistortion", "glassDistortionValue", "glassDistortion", (v) => v.toFixed(2));
-  bindSlider("glassHighlight", "glassHighlightValue", "glassHighlight", (v) => v.toFixed(2));
-  bindSlider("glassSoftness", "glassSoftnessValue", "glassSoftness", (v) => v.toFixed(2));
-  bindIntSlider("glassCount", "glassCountValue", "glassCount");
-  bindIntSlider("glassBandsCount", "glassBandsCountValue", "glassBandsCount");
-  bindSlider("glassCirclesAmount", "glassCirclesAmountValue", "glassCirclesAmount", (v) => v.toFixed(2));
-  bindSlider("glassCirclesScale", "glassCirclesScaleValue", "glassCirclesScale", (v) => v.toFixed(2));
-  bindSlider("glassCirclesRotate", "glassCirclesRotateValue", "glassCirclesRotate", (v) => `${Math.round(v)}°`);
-  bindSlider("glassCirclesThickness", "glassCirclesThicknessValue", "glassCirclesThickness", (v) => v.toFixed(2));
-  bindSlider("glassCirclesStretch", "glassCirclesStretchValue", "glassCirclesStretch", (v) => v.toFixed(2));
-
-  bindSlider("waveAmount", "waveAmountValue", "waveAmount", (v) => v.toFixed(2));
-  bindSlider("waveScale", "waveScaleValue", "waveScale", (v) => v.toFixed(2));
-  bindSlider("waveSpeed", "waveSpeedValue", "waveSpeed", (v) => v.toFixed(2));
-  bindSlider("waveAngle", "waveAngleValue", "waveAngle", (v) => `${Math.round(v)}°`);
-  bindSlider("waveDetail", "waveDetailValue", "waveDetail", (v) => v.toFixed(2));
 
   const blobControlsEl = $("blobControls");
   const bgColorEl = $("bgColor");
@@ -1075,26 +683,6 @@ function main() {
         edgeBlurMin: state.edgeBlurMin,
         edgeBlurMax: state.edgeBlurMax,
         edgeBlurSpeed: state.edgeBlurSpeed,
-        overlayMode: state.overlayMode,
-        glassShapeType: state.glassShapeType,
-        glassAmount: state.glassAmount,
-        glassDistortion: state.glassDistortion,
-        glassHighlight: state.glassHighlight,
-        glassSoftness: state.glassSoftness,
-        glassCount: state.glassCount,
-        glassBandsCount: state.glassBandsCount,
-        glassRotate: state.glassRotate,
-        glassTwirl: state.glassTwirl,
-        glassCirclesAmount: state.glassCirclesAmount,
-        glassCirclesScale: state.glassCirclesScale,
-        glassCirclesRotate: state.glassCirclesRotate,
-        glassCirclesThickness: state.glassCirclesThickness,
-        glassCirclesStretch: state.glassCirclesStretch,
-        waveAmount: state.waveAmount,
-        waveScale: state.waveScale,
-        waveSpeed: state.waveSpeed,
-        waveAngle: state.waveAngle,
-        waveDetail: state.waveDetail,
       },
       colors: {
         background: state.bgColor,
@@ -1126,8 +714,6 @@ function main() {
     const cfg = JSON.stringify(cfgObj, null, 2);
     const bg = (cfgObj && cfgObj.colors && cfgObj.colors.background) || "#0b0712";
     const instanceId = `metaball-gradient-${cfgObj.savedAt || Date.now()}`;
-    const PREC_TOKEN = "__MBG_PRECISION__";
-    const FRAG_TEMPLATE = getFragmentShaderSource(PREC_TOKEN);
 
     // NOTE: this is intentionally the same shader as VEV, but with simpler sizing.
     return (
@@ -1155,7 +741,7 @@ function main() {
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35,overlayMode:1,glassShapeType:1,glassAmount:0.18,glassDistortion:0.18,glassHighlight:0.20,glassSoftness:0.55,glassCount:8,glassBandsCount:42,glassRotate:0,glassTwirl:0.15,glassCirclesAmount:0.12,glassCirclesScale:0.45,glassCirclesRotate:0,glassCirclesThickness:0.55,glassCirclesStretch:0.25,waveAmount:0.18,waveScale:0.45,waveSpeed:0.22,waveAngle:0,waveDetail:0.45};\n` +
+      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35};\n` +
       `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
@@ -1166,15 +752,16 @@ function main() {
       `    function compile(type,src){var sh=gl.createShader(type);gl.shaderSource(sh,src);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){var info=gl.getShaderInfoLog(sh)||"Shader compile error.";gl.deleteShader(sh);throw new Error(info);}return sh;}\n` +
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
-      `    var FRAG_TEMPLATE=${JSON.stringify(FRAG_TEMPLATE)};\n` +
-      `    function fragSrc(prec){return FRAG_TEMPLATE.split(${JSON.stringify(PREC_TOKEN)}).join(prec);}\n` +
-      `    var PREC_TOKEN=${JSON.stringify(PREC_TOKEN)};\n` +
-      `    var FRAG_TEMPLATE=${JSON.stringify(FRAG_TEMPLATE)};\n` +
-      `    fragSrc=function(prec){return FRAG_TEMPLATE.split(PREC_TOKEN).join(prec);};\n` +
+      `    function fragSrc(prec){return prec+'\\n'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
+      `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
+      `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
+      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float seed01=clamp(u_blobSoftSeed[i]*0.5+0.5,0.0,1.0);float mix01=clamp(u_edgeBlurMix*0.65+seed01*0.35,0.0,1.0);float blur01=mix(u_edgeBlurMin,u_edgeBlurMax,mix01);w=pow(w,1.0/(1.0+blur01*2.0));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uOM=gl.getUniformLocation(prog,'u_overlayMode');var uGST=gl.getUniformLocation(prog,'u_glassShapeType');var uGA=gl.getUniformLocation(prog,'u_glassAmount');var uGD=gl.getUniformLocation(prog,'u_glassDistortion');var uGH=gl.getUniformLocation(prog,'u_glassHighlight');var uGSof=gl.getUniformLocation(prog,'u_glassSoftness');var uGC=gl.getUniformLocation(prog,'u_glassCount');var uGBC=gl.getUniformLocation(prog,'u_glassBandsCount');var uGRot=gl.getUniformLocation(prog,'u_glassRotate');var uGTw=gl.getUniformLocation(prog,'u_glassTwirl');var uGCA=gl.getUniformLocation(prog,'u_glassCirclesAmount');var uGCS=gl.getUniformLocation(prog,'u_glassCirclesScale');var uGCR=gl.getUniformLocation(prog,'u_glassCirclesRotate');var uGCT=gl.getUniformLocation(prog,'u_glassCirclesThickness');var uGCSt=gl.getUniformLocation(prog,'u_glassCirclesStretch');var uWA=gl.getUniformLocation(prog,'u_waveAmount');var uWS=gl.getUniformLocation(prog,'u_waveScale');var uWSp=gl.getUniformLocation(prog,'u_waveSpeed');var uWAng=gl.getUniformLocation(prog,'u_waveAngle');var uWD=gl.getUniformLocation(prog,'u_waveDetail');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
@@ -1190,7 +777,7 @@ function main() {
       `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
       `    function start(){if(running)return;running=true;raf=requestAnimationFrame(frame);} \n` +
       `    document.addEventListener('visibilitychange',function(){if(document.hidden)stop();else start();});\n` +
-      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1i(uOM,clamp(state.overlayMode|0,0,2));gl.uniform1i(uGST,clamp(state.glassShapeType|0,1,3));gl.uniform1f(uGA,clamp(state.glassAmount||0,0,1));gl.uniform1f(uGD,clamp(state.glassDistortion||0,0,1));gl.uniform1f(uGH,clamp(state.glassHighlight||0,0,1));gl.uniform1f(uGSof,clamp(state.glassSoftness||0,0,1));gl.uniform1i(uGC,clamp(state.glassCount|0,0,10));gl.uniform1i(uGBC,clamp(state.glassBandsCount|0,6,80));gl.uniform1f(uGRot,(state.glassRotate||0)*Math.PI/180);gl.uniform1f(uGTw,clamp(state.glassTwirl||0,0,1));gl.uniform1f(uGCA,clamp(state.glassCirclesAmount||0,0,1));gl.uniform1f(uGCS,clamp(state.glassCirclesScale||0,0,1));gl.uniform1f(uGCR,(state.glassCirclesRotate||0)*Math.PI/180);gl.uniform1f(uGCT,clamp(state.glassCirclesThickness||0,0,1));gl.uniform1f(uGCSt,clamp(state.glassCirclesStretch||0,0,1));gl.uniform1f(uWA,clamp(state.waveAmount||0,0,1));gl.uniform1f(uWS,clamp(state.waveScale||0,0,1));gl.uniform1f(uWSp,clamp(state.waveSpeed||0,0,1));gl.uniform1f(uWAng,(state.waveAngle||0)*Math.PI/180);gl.uniform1f(uWD,clamp(state.waveDetail||0,0,1));gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
+      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
@@ -1205,8 +792,6 @@ function main() {
     const cfgObj = serializeConfig();
     const cfg = JSON.stringify(cfgObj, null, 2);
     const bg = (cfgObj && cfgObj.colors && cfgObj.colors.background) || "#0b0712";
-    const PREC_TOKEN = "__MBG_PRECISION__";
-    const FRAG_TEMPLATE = getFragmentShaderSource(PREC_TOKEN);
     // Critical: make each snippet instance-scoped so multiple embeds on one page
     // can coexist with different presets without interfering with each other.
     const instanceId = `metaball-gradient-${cfgObj.savedAt || Date.now()}`;
@@ -1239,7 +824,7 @@ function main() {
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35,overlayMode:1,glassShapeType:1,glassAmount:0.18,glassDistortion:0.18,glassHighlight:0.20,glassSoftness:0.55,glassCount:8,glassBandsCount:42,glassRotate:0,glassTwirl:0.15,glassCirclesAmount:0.12,glassCirclesScale:0.45,glassCirclesRotate:0,glassCirclesThickness:0.55,glassCirclesStretch:0.25,waveAmount:0.18,waveScale:0.45,waveSpeed:0.22,waveAngle:0,waveDetail:0.45};\n` +
+      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35};\n` +
       `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
@@ -1251,15 +836,15 @@ function main() {
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
       `    function fragSrc(prec){return prec+'\\n'+\n` +
-      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_glassEnabled;uniform int u_glassShapeType;uniform float u_glassAmount;uniform float u_glassDistortion;uniform float u_glassHighlight;uniform float u_glassSoftness;uniform int u_glassCount;uniform float u_glassRotate;uniform float u_glassTwirl;uniform float u_glassCirclesAmount;uniform float u_glassCirclesScale;uniform float u_glassCirclesRotate;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
       `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
       `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
       `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
-      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 base=u_bgColor;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float seed01=clamp(u_blobSoftSeed[i]*0.5+0.5,0.0,1.0);float mix01=clamp(u_edgeBlurMix*0.65+seed01*0.35,0.0,1.0);float blur01=mix(u_edgeBlurMin,u_edgeBlurMax,mix01);w=pow(w,1.0/(1.0+blur01*2.0));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 colBase=mix(base,blobCol,coverage);colBase*=mix(0.88,1.05,v);float glassOn=step(0.5,u_glassEnabled);float gMask=0.0;vec2 gOff=vec2(0.0);float gLight=0.0;if(glassOn>0.5){float feather=mix(0.010,0.120,clamp(u_glassSoftness,0.0,1.0));for(int j=0;j<10;j++){float act=step(float(j),float(u_glassCount-1));float jj=float(j);float r1=hash12(vec2(jj*13.17,1.23));float r2=hash12(vec2(jj*17.71,7.77));float r3=hash12(vec2(jj*23.91,3.11));float r4=hash12(vec2(jj*29.77,9.41));float m=0.0;float shade=0.0;vec2 dir=vec2(1.0,0.12);if(u_glassShapeType==1){float cx=mix(-0.55*aspect,0.55*aspect,r1);float halfW=mix(0.06,0.16,r2)*aspect;float halfH=0.70;float rr=halfW*mix(0.25,0.55,r3);vec2 q=vec2(abs(pp.x-cx)-halfW,abs(pp.y)-halfH);float sdf=length(max(q,0.0))+min(max(q.x,q.y),0.0)-rr;m=1.0-smoothstep(0.0,feather,sdf);float nx=clamp((pp.x-cx)/max(1e-5,halfW),-1.0,1.0);float hl=smoothstep(-0.10,0.85,nx)*(1.0-smoothstep(0.55,1.15,abs(nx)));float sh=smoothstep(-0.85,0.10,nx)*(1.0-smoothstep(0.55,1.15,abs(nx)));shade=(hl-sh)*(0.55+0.45*r4);dir=normalize(vec2(1.0,mix(0.05,0.20,r4)));}else{vec2 c2=vec2(mix(-0.45*aspect,0.45*aspect,r1),mix(-0.35,0.35,r2));vec2 sz=vec2(mix(0.18,0.46,r3)*aspect,mix(0.12,0.34,r4));vec2 d=(pp-c2)/max(vec2(1e-4),sz);float distE=length(d);m=1.0-smoothstep(1.0-feather*1.35,1.0,distE);float ang=r3*6.2831853;dir=normalize(vec2(cos(ang),sin(ang)));shade=clamp(dot(d,dir),-1.0,1.0)*(0.55+0.45*r2);}vec2 wob=vec2(fbm(pp*1.25+jj*9.7+t*0.06),fbm(pp*1.25+jj*6.1-t*0.05))-0.5;float mm=m*act;gMask+=mm;gLight+=mm*shade;gOff+=mm*(dir*(0.55+0.45*r1)+wob*0.65);}gMask=clamp(gMask,0.0,1.0);gOff*=(clamp(u_glassDistortion,0.0,1.0)*0.045)/max(0.05,float(u_glassCount));gLight=clamp(gLight,-1.0,1.0);}vec3 col=colBase;float gMix=glassOn*clamp(u_glassAmount,0.0,1.0)*gMask;if(gMix>0.0005){vec2 pp2=pp+gOff;vec3 cSum2=vec3(0.0);float wSum2=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp2-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp2-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float seed01=clamp(u_blobSoftSeed[i]*0.5+0.5,0.0,1.0);float mix01=clamp(u_edgeBlurMix*0.65+seed01*0.35,0.0,1.0);float blur01=mix(u_edgeBlurMin,u_edgeBlurMax,mix01);w=pow(w,1.0/(1.0+blur01*2.0));float w2=w*w;cSum2+=u_blobColor[i]*(w2*active);wSum2+=w2*active;}vec3 blobCol2=cSum2/max(1e-5,wSum2);float cov2=1.0-exp(-wSum2*1.25);cov2=clamp(cov2,0.0,1.0);vec3 colR=mix(base,blobCol2,cov2);colR*=mix(0.88,1.05,v);col=mix(colBase,colR,gMix);float hl=clamp(u_glassHighlight,0.0,1.0)*0.065;col+=gMix*hl*gLight*vec3(1.0);col-=gMix*hl*max(0.0,-gLight)*vec3(0.85,0.88,0.95);}float gr=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=gr*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
+      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float seed01=clamp(u_blobSoftSeed[i]*0.5+0.5,0.0,1.0);float mix01=clamp(u_edgeBlurMix*0.65+seed01*0.35,0.0,1.0);float blur01=mix(u_edgeBlurMin,u_edgeBlurMax,mix01);w=pow(w,1.0/(1.0+blur01*2.0));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uOM=gl.getUniformLocation(prog,'u_overlayMode');var uGST=gl.getUniformLocation(prog,'u_glassShapeType');var uGA=gl.getUniformLocation(prog,'u_glassAmount');var uGD=gl.getUniformLocation(prog,'u_glassDistortion');var uGH=gl.getUniformLocation(prog,'u_glassHighlight');var uGSof=gl.getUniformLocation(prog,'u_glassSoftness');var uGC=gl.getUniformLocation(prog,'u_glassCount');var uGBC=gl.getUniformLocation(prog,'u_glassBandsCount');var uGRot=gl.getUniformLocation(prog,'u_glassRotate');var uGTw=gl.getUniformLocation(prog,'u_glassTwirl');var uGCA=gl.getUniformLocation(prog,'u_glassCirclesAmount');var uGCS=gl.getUniformLocation(prog,'u_glassCirclesScale');var uGCR=gl.getUniformLocation(prog,'u_glassCirclesRotate');var uGCT=gl.getUniformLocation(prog,'u_glassCirclesThickness');var uGCSt=gl.getUniformLocation(prog,'u_glassCirclesStretch');var uWA=gl.getUniformLocation(prog,'u_waveAmount');var uWS=gl.getUniformLocation(prog,'u_waveScale');var uWSp=gl.getUniformLocation(prog,'u_waveSpeed');var uWAng=gl.getUniformLocation(prog,'u_waveAngle');var uWD=gl.getUniformLocation(prog,'u_waveDetail');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
@@ -1338,7 +923,7 @@ function main() {
       `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
       `    function start(){if(running)return;running=true;raf=requestAnimationFrame(frame);} \n` +
       `    document.addEventListener('visibilitychange',function(){if(document.hidden)stop();else start();});\n` +
-      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1i(uOM,clamp(state.overlayMode|0,0,2));gl.uniform1i(uGST,clamp(state.glassShapeType|0,1,3));gl.uniform1f(uGA,clamp(state.glassAmount||0,0,1));gl.uniform1f(uGD,clamp(state.glassDistortion||0,0,1));gl.uniform1f(uGH,clamp(state.glassHighlight||0,0,1));gl.uniform1f(uGSof,clamp(state.glassSoftness||0,0,1));gl.uniform1i(uGC,clamp(state.glassCount|0,0,10));gl.uniform1i(uGBC,clamp(state.glassBandsCount|0,6,80));gl.uniform1f(uGRot,(state.glassRotate||0)*Math.PI/180);gl.uniform1f(uGTw,clamp(state.glassTwirl||0,0,1));gl.uniform1f(uGCA,clamp(state.glassCirclesAmount||0,0,1));gl.uniform1f(uGCS,clamp(state.glassCirclesScale||0,0,1));gl.uniform1f(uGCR,(state.glassCirclesRotate||0)*Math.PI/180);gl.uniform1f(uGCT,clamp(state.glassCirclesThickness||0,0,1));gl.uniform1f(uGCSt,clamp(state.glassCirclesStretch||0,0,1));gl.uniform1f(uWA,clamp(state.waveAmount||0,0,1));gl.uniform1f(uWS,clamp(state.waveScale||0,0,1));gl.uniform1f(uWSp,clamp(state.waveSpeed||0,0,1));gl.uniform1f(uWAng,(state.waveAngle||0)*Math.PI/180);gl.uniform1f(uWD,clamp(state.waveDetail||0,0,1));gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
+      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
@@ -1436,28 +1021,6 @@ function main() {
       if (typeof s.edgeBlurMin === "number") state.edgeBlurMin = s.edgeBlurMin;
       if (typeof s.edgeBlurMax === "number") state.edgeBlurMax = s.edgeBlurMax;
       if (typeof s.edgeBlurSpeed === "number") state.edgeBlurSpeed = s.edgeBlurSpeed;
-      if (typeof s.overlayMode === "number") state.overlayMode = s.overlayMode;
-      // Back-compat: older presets used a glassEnabled flag.
-      if (typeof s.glassEnabled === "number" && !("overlayMode" in s)) state.overlayMode = s.glassEnabled >= 0.5 ? 1 : 0;
-      if (typeof s.glassShapeType === "number") state.glassShapeType = s.glassShapeType;
-      if (typeof s.glassAmount === "number") state.glassAmount = s.glassAmount;
-      if (typeof s.glassDistortion === "number") state.glassDistortion = s.glassDistortion;
-      if (typeof s.glassHighlight === "number") state.glassHighlight = s.glassHighlight;
-      if (typeof s.glassSoftness === "number") state.glassSoftness = s.glassSoftness;
-      if (typeof s.glassCount === "number") state.glassCount = s.glassCount;
-      if (typeof s.glassBandsCount === "number") state.glassBandsCount = s.glassBandsCount;
-      if (typeof s.glassRotate === "number") state.glassRotate = s.glassRotate;
-      if (typeof s.glassTwirl === "number") state.glassTwirl = s.glassTwirl;
-      if (typeof s.glassCirclesAmount === "number") state.glassCirclesAmount = s.glassCirclesAmount;
-      if (typeof s.glassCirclesScale === "number") state.glassCirclesScale = s.glassCirclesScale;
-      if (typeof s.glassCirclesRotate === "number") state.glassCirclesRotate = s.glassCirclesRotate;
-      if (typeof s.glassCirclesThickness === "number") state.glassCirclesThickness = s.glassCirclesThickness;
-      if (typeof s.glassCirclesStretch === "number") state.glassCirclesStretch = s.glassCirclesStretch;
-      if (typeof s.waveAmount === "number") state.waveAmount = s.waveAmount;
-      if (typeof s.waveScale === "number") state.waveScale = s.waveScale;
-      if (typeof s.waveSpeed === "number") state.waveSpeed = s.waveSpeed;
-      if (typeof s.waveAngle === "number") state.waveAngle = s.waveAngle;
-      if (typeof s.waveDetail === "number") state.waveDetail = s.waveDetail;
       if (n != null) state.blobCount = n;
     }
 
@@ -1529,57 +1092,8 @@ function main() {
     setOut("edgeBlurMaxValue", state.edgeBlurMax.toFixed(2));
     setOut("edgeBlurSpeed", String(state.edgeBlurSpeed));
     setOut("edgeBlurSpeedValue", state.edgeBlurSpeed.toFixed(2));
-
-    const overlayEl = $("overlayMode");
-    if (overlayEl) overlayEl.value = String(state.overlayMode | 0);
-    const overlayOut = $("overlayModeValue");
-    if (overlayEl && overlayOut) overlayOut.value = overlayEl.options[overlayEl.selectedIndex]?.textContent || String(state.overlayMode);
-    setOut("glassShapeType", String(state.glassShapeType));
-    const gst = $("glassShapeType");
-    if (gst) {
-      const out = $("glassShapeTypeValue");
-      if (out) out.value = gst.options[gst.selectedIndex]?.textContent || String(state.glassShapeType);
-    }
-    setOut("glassAmount", String(state.glassAmount));
-    setOut("glassAmountValue", state.glassAmount.toFixed(2));
-    setOut("glassDistortion", String(state.glassDistortion));
-    setOut("glassDistortionValue", state.glassDistortion.toFixed(2));
-    setOut("glassHighlight", String(state.glassHighlight));
-    setOut("glassHighlightValue", state.glassHighlight.toFixed(2));
-    setOut("glassSoftness", String(state.glassSoftness));
-    setOut("glassSoftnessValue", state.glassSoftness.toFixed(2));
-    setOut("glassCount", String(state.glassCount | 0));
-    setOut("glassCountValue", String(state.glassCount | 0));
-    setOut("glassBandsCount", String(state.glassBandsCount | 0));
-    setOut("glassBandsCountValue", String(state.glassBandsCount | 0));
-    setOut("glassRotate", String(state.glassRotate));
-    setOut("glassRotateValue", `${Math.round(state.glassRotate)}°`);
-    setOut("glassTwirl", String(state.glassTwirl));
-    setOut("glassTwirlValue", state.glassTwirl.toFixed(2));
-    setOut("glassCirclesAmount", String(state.glassCirclesAmount));
-    setOut("glassCirclesAmountValue", state.glassCirclesAmount.toFixed(2));
-    setOut("glassCirclesScale", String(state.glassCirclesScale));
-    setOut("glassCirclesScaleValue", state.glassCirclesScale.toFixed(2));
-    setOut("glassCirclesRotate", String(state.glassCirclesRotate));
-    setOut("glassCirclesRotateValue", `${Math.round(state.glassCirclesRotate)}°`);
-    setOut("glassCirclesThickness", String(state.glassCirclesThickness));
-    setOut("glassCirclesThicknessValue", state.glassCirclesThickness.toFixed(2));
-    setOut("glassCirclesStretch", String(state.glassCirclesStretch));
-    setOut("glassCirclesStretchValue", state.glassCirclesStretch.toFixed(2));
-    setOut("waveAmount", String(state.waveAmount));
-    setOut("waveAmountValue", state.waveAmount.toFixed(2));
-    setOut("waveScale", String(state.waveScale));
-    setOut("waveScaleValue", state.waveScale.toFixed(2));
-    setOut("waveSpeed", String(state.waveSpeed));
-    setOut("waveSpeedValue", state.waveSpeed.toFixed(2));
-    setOut("waveAngle", String(state.waveAngle));
-    setOut("waveAngleValue", `${Math.round(state.waveAngle)}°`);
-    setOut("waveDetail", String(state.waveDetail));
-    setOut("waveDetailValue", state.waveDetail.toFixed(2));
     const bgInput = $("bgColor");
     if (bgInput) bgInput.value = state.bgColor;
-
-    updateOverlayControlVisibility();
 
     rebuildBlobControls();
     updateEmbedCode();
@@ -1743,26 +1257,6 @@ function main() {
     gl.uniform1f(uEdgeBlurMin, state.edgeBlurMin);
     gl.uniform1f(uEdgeBlurMax, state.edgeBlurMax);
     gl.uniform1f(uEdgeBlurMix, edgeBlurMix);
-    gl.uniform1i(uOverlayMode, clamp(state.overlayMode | 0, 0, 2));
-    gl.uniform1i(uGlassShapeType, clamp(state.glassShapeType | 0, 1, 3));
-    gl.uniform1f(uGlassAmount, state.glassAmount);
-    gl.uniform1f(uGlassDistortion, state.glassDistortion);
-    gl.uniform1f(uGlassHighlight, state.glassHighlight);
-    gl.uniform1f(uGlassSoftness, state.glassSoftness);
-    gl.uniform1i(uGlassCount, clamp(state.glassCount | 0, 0, 10));
-    gl.uniform1i(uGlassBandsCount, clamp(state.glassBandsCount | 0, 6, 80));
-    gl.uniform1f(uGlassRotate, (state.glassRotate * Math.PI) / 180);
-    gl.uniform1f(uGlassTwirl, state.glassTwirl);
-    gl.uniform1f(uGlassCirclesAmount, state.glassCirclesAmount);
-    gl.uniform1f(uGlassCirclesScale, state.glassCirclesScale);
-    gl.uniform1f(uGlassCirclesRotate, (state.glassCirclesRotate * Math.PI) / 180);
-    gl.uniform1f(uGlassCirclesThickness, state.glassCirclesThickness);
-    gl.uniform1f(uGlassCirclesStretch, state.glassCirclesStretch);
-    gl.uniform1f(uWaveAmount, state.waveAmount);
-    gl.uniform1f(uWaveScale, state.waveScale);
-    gl.uniform1f(uWaveSpeed, state.waveSpeed);
-    gl.uniform1f(uWaveAngle, (state.waveAngle * Math.PI) / 180);
-    gl.uniform1f(uWaveDetail, state.waveDetail);
     gl.uniform1f(uDistAmount, state.distAmount);
     gl.uniform1f(uDistScale, state.distScale);
     gl.uniform1f(uDistSpeed, state.distSpeed);
