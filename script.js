@@ -492,7 +492,8 @@ void main() {
     float det = mix(0.0, 1.0, clamp(u_waveDetail, 0.0, 1.0));
     float w = 0.62 * w1 + 0.38 * w2 + n * (0.55 * det);
 
-    vec2 wOff = (dir * w + dir2 * (n * 0.9)) * (0.040 * a);
+    // Make the warp visibly distinct when enabled, while still allowing subtle values.
+    vec2 wOff = (dir * (w * 1.25) + dir2 * (n * 1.05)) * (0.090 * a);
     vec2 ppw = pp + wOff;
 
     // Recompute metaball field once at warped coordinate.
