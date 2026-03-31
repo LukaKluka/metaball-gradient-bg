@@ -259,15 +259,16 @@ input[type="range"]::-moz-focus-outer {
 }
 
 .swatches {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 6px;
   margin-top: 10px;
 }
 
 .swatch {
-  width: 18px;
-  height: 18px;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  min-width: 0;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   cursor: pointer;

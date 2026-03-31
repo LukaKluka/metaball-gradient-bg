@@ -31,6 +31,14 @@
         </div>
 
         <div class="control">
+          <label class="control__label" for="motionMode">Motion Mode</label>
+          <select id="motionMode">
+            <option value="animate">Animate</option>
+            <option value="cursor">Cursor Follow</option>
+          </select>
+        </div>
+
+        <div class="control">
           <label class="control__label" for="grain">Grain</label>
           <div class="control__row">
             <input id="grain" type="range" min="0" max="1" step="0.01" />
@@ -63,47 +71,34 @@
         </div>
 
         <div class="control">
-          <label class="control__label" for="globalSoftness">Global Softness</label>
+          <label class="control__label" for="zoom">Zoom</label>
           <div class="control__row">
-            <input id="globalSoftness" type="range" min="0.4" max="1.8" step="0.01" />
-            <output class="control__value" id="globalSoftnessValue"></output>
+            <input id="zoom" type="range" min="0.5" max="3" step="0.01" />
+            <output class="control__value" id="zoomValue"></output>
           </div>
         </div>
 
         <div class="control">
-          <label class="control__label" for="softVar">Softness Variation</label>
+          <label class="control__label" for="blobScale">Blob Scale</label>
           <div class="control__row">
-            <input id="softVar" type="range" min="0" max="0.6" step="0.01" />
-            <output class="control__value" id="softVarValue"></output>
-          </div>
-        </div>
-
-        <div class="panel__divider"></div>
-
-        <div class="control">
-          <label class="control__label" for="edgeBlurMin">Edge Blur Min</label>
-          <div class="control__row">
-            <input id="edgeBlurMin" type="range" min="0" max="1" step="0.01" />
-            <output class="control__value" id="edgeBlurMinValue"></output>
+            <input id="blobScale" type="range" min="0.5" max="4" step="0.01" />
+            <output class="control__value" id="blobScaleValue"></output>
           </div>
         </div>
 
         <div class="control">
-          <label class="control__label" for="edgeBlurMax">Edge Blur Max</label>
+          <label class="control__label" for="softMin">Softness Min</label>
           <div class="control__row">
-            <input id="edgeBlurMax" type="range" min="0" max="1" step="0.01" />
-            <output class="control__value" id="edgeBlurMaxValue"></output>
+            <input id="softMin" type="range" min="0" max="2" step="0.01" />
+            <output class="control__value" id="softMinValue"></output>
           </div>
         </div>
 
         <div class="control">
-          <label class="control__label" for="edgeBlurSpeed">Edge Blur Randomize Speed</label>
+          <label class="control__label" for="softMax">Softness Max</label>
           <div class="control__row">
-            <input id="edgeBlurSpeed" type="range" min="0" max="1" step="0.01" />
-            <output class="control__value" id="edgeBlurSpeedValue"></output>
-          </div>
-          <div class="control__actions">
-            <button class="btn btn--ghost" id="edgeBlurRandomize" type="button">Randomize now</button>
+            <input id="softMax" type="range" min="0" max="2" step="0.01" />
+            <output class="control__value" id="softMaxValue"></output>
           </div>
         </div>
 

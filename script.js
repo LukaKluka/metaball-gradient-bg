@@ -15,14 +15,14 @@
  * - u_time: float
  * - u_blobCount: int
  * - u_grain: float
- * - u_globalSoftness: float
- * - u_softVar: float
+ * - u_softMin: float
+ * - u_softMax: float
  * - u_distAmount: float
  * - u_distScale: float
  * - u_distSpeed: float
  * - u_blob: vec4[MAX_BLOBS]     -> xy = center in [0..1], z = radius (UV units), w = distortionSeed
  * - u_blobColor: vec3[MAX_BLOBS] -> rgb in [0..1]
- * - u_blobSoftSeed: float[MAX_BLOBS] -> stable seed in [-1..1] for softness variation
+ * - u_blobSoftSeed: float[MAX_BLOBS] -> stable seed in [-1..1] for softness range selection
  */
 
 const MAX_BLOBS = 8;
@@ -89,6 +89,17 @@ function pickDefaultColor(i) {
   return SWATCHES[i % SWATCHES.length];
 }
 
+function normalizeMotionMode(value) {
+  return value === "cursor" ? "cursor" : "animate";
+}
+
+function normalizeSoftnessRange(state) {
+  const min = clamp(state.softMin, 0, 2);
+  const max = clamp(state.softMax, 0, 2);
+  state.softMin = Math.min(min, max);
+  state.softMax = Math.max(min, max);
+}
+
 function createBlob(i) {
   // Base positions biased toward center; motion keeps them near/inside view.
   const baseX = 0.25 + rand01(i, 1.1) * 0.5;
@@ -111,7 +122,6 @@ function createBlob(i) {
   // Seeds for shader-side variation (stable; not re-randomized per frame).
   const softnessSeed = rand01(i, 11.2) * 2 - 1; // [-1..1]
   const distortionSeed = rand01(i, 12.3); // [0..1]
-
   return {
     color: pickDefaultColor(i),
     baseX,
@@ -182,11 +192,8 @@ uniform vec3 u_bgColor;
 uniform float u_time;
 uniform int u_blobCount;
 uniform float u_grain;
-uniform float u_globalSoftness;
-uniform float u_softVar;
-uniform float u_edgeBlurMin;
-uniform float u_edgeBlurMax;
-uniform float u_edgeBlurMix;
+uniform float u_softMin;
+uniform float u_softMax;
 uniform float u_distAmount;
 uniform float u_distScale;
 uniform float u_distSpeed;
@@ -260,18 +267,20 @@ void main() {
     float r = max(0.0001, u_blob[i].z);
     float dist = length(pp - c) * warp;
 
-    // Softness varies per blob around global softness using stable seeds.
-    float soft = clamp(u_globalSoftness + u_softVar * u_blobSoftSeed[i], 0.35, 2.2);
+    // Each blob picks a stable softness within the user-defined range.
+    float softSeed01 = clamp(u_blobSoftSeed[i] * 0.5 + 0.5, 0.0, 1.0);
+    float softLo = min(u_softMin, u_softMax);
+    float softHi = max(u_softMin, u_softMax);
+    float soft = mix(softLo, softHi, softSeed01);
+    float feather = clamp(soft * 0.5, 0.0, 1.0);
 
-    // Gaussian-like influence: premium gradients, avoids hard circles.
-    float sigma = r * soft;
-    float w = exp(-(dist * dist) / (2.0 * sigma * sigma));
-
-    // Edge Blur (new): adjusts edge softness without changing sigma.
-    float seed01 = clamp(u_blobSoftSeed[i] * 0.5 + 0.5, 0.0, 1.0);
-    float mix01 = clamp(u_edgeBlurMix * 0.65 + seed01 * 0.35, 0.0, 1.0);
-    float blur01 = mix(u_edgeBlurMin, u_edgeBlurMax, mix01);
-    w = pow(w, 1.0 / (1.0 + blur01 * 2.0));
+    // Radius stays fixed; only the contour transition width changes.
+    float edgeWidth = max(r * mix(0.004, 0.42, feather), 0.0009);
+    float inner = max(0.0, r - edgeWidth);
+    float outer = r + edgeWidth;
+    float w = 1.0 - smoothstep(inner, outer, dist);
+    float edgeExponent = mix(1.14, 0.92, feather);
+    w = pow(clamp(w, 0.0, 1.0), edgeExponent);
 
     // Slightly emphasize stronger contributions to avoid muddiness.
     float w2 = w * w;
@@ -326,15 +335,15 @@ function main() {
   // --- State (UI can override these; embed config can pre-set them) ---
   const state = {
     blobCount: 3,
+    motionMode: "animate",
     grain: 0.18,
     distAmount: 0.16,
     distScale: 1.05,
     distSpeed: 0.12,
-    globalSoftness: 1.02,
-    softVar: 0.12,
-    edgeBlurMin: 0.0,
-    edgeBlurMax: 0.55,
-    edgeBlurSpeed: 0.35,
+    zoom: 1.0,
+    blobScale: 1.0,
+    softMin: 0.85,
+    softMax: 1.15,
     bgColor: "#0B0712",
   };
 
@@ -347,20 +356,35 @@ function main() {
         "distAmount",
         "distScale",
         "distSpeed",
-        "globalSoftness",
-        "softVar",
-        "edgeBlurMin",
-        "edgeBlurMax",
-        "edgeBlurSpeed",
+        "zoom",
+        "blobScale",
+        "softMin",
+        "softMax",
       ]) {
         if (typeof s[k] === "number" && Number.isFinite(s[k])) state[k] = s[k];
       }
+      if (typeof s.scale === "number" && Number.isFinite(s.scale)) {
+        state.zoom = s.scale;
+        state.blobScale = s.scale;
+      }
+      if (
+        typeof s.softMin !== "number" &&
+        typeof s.softMax !== "number" &&
+        typeof s.globalSoftness === "number"
+      ) {
+        const center = clamp(s.globalSoftness, 0, 2);
+        const spread = typeof s.softVar === "number" ? Math.max(0, s.softVar) : 0;
+        state.softMin = clamp(center - spread, 0, 2);
+        state.softMax = clamp(center + spread, 0, 2);
+      }
+      if (typeof s.motionMode === "string") state.motionMode = normalizeMotionMode(s.motionMode);
     }
     if (external.colors && typeof external.colors === "object") {
       if (typeof external.colors.background === "string") state.bgColor = external.colors.background;
     }
   }
 
+  normalizeSoftnessRange(state);
   state.blobCount = clamp(state.blobCount | 0, 1, MAX_BLOBS);
 
   // Stable blob data (max length); we simply change active count.
@@ -444,11 +468,8 @@ function main() {
   const uTime = gl.getUniformLocation(program, "u_time");
   const uBlobCount = gl.getUniformLocation(program, "u_blobCount");
   const uGrain = gl.getUniformLocation(program, "u_grain");
-  const uGlobalSoftness = gl.getUniformLocation(program, "u_globalSoftness");
-  const uSoftVar = gl.getUniformLocation(program, "u_softVar");
-  const uEdgeBlurMin = gl.getUniformLocation(program, "u_edgeBlurMin");
-  const uEdgeBlurMax = gl.getUniformLocation(program, "u_edgeBlurMax");
-  const uEdgeBlurMix = gl.getUniformLocation(program, "u_edgeBlurMix");
+  const uSoftMin = gl.getUniformLocation(program, "u_softMin");
+  const uSoftMax = gl.getUniformLocation(program, "u_softMax");
   const uDistAmount = gl.getUniformLocation(program, "u_distAmount");
   const uDistScale = gl.getUniformLocation(program, "u_distScale");
   const uDistSpeed = gl.getUniformLocation(program, "u_distSpeed");
@@ -547,6 +568,54 @@ function main() {
     });
   }
 
+  function bindSelect(id, key, normalizeFn) {
+    const el = $(id);
+    if (!el) return;
+    const normalize = typeof normalizeFn === "function" ? normalizeFn : (value) => value;
+    state[key] = normalize(state[key]);
+    el.value = state[key];
+    el.addEventListener("change", () => {
+      state[key] = normalize(el.value);
+      el.value = state[key];
+      updateEmbedCode();
+    });
+  }
+
+  function syncSoftnessRangeUI() {
+    const minEl = $("softMin");
+    const minOut = $("softMinValue");
+    const maxEl = $("softMax");
+    const maxOut = $("softMaxValue");
+    if (minEl) minEl.value = String(state.softMin);
+    if (minOut) minOut.value = state.softMin.toFixed(2);
+    if (maxEl) maxEl.value = String(state.softMax);
+    if (maxOut) maxOut.value = state.softMax.toFixed(2);
+  }
+
+  function bindSoftnessRange() {
+    const minEl = $("softMin");
+    const maxEl = $("softMax");
+    if (!minEl || !maxEl) return;
+    normalizeSoftnessRange(state);
+    syncSoftnessRangeUI();
+
+    minEl.addEventListener("input", () => {
+      const v = parseFloat(minEl.value);
+      state.softMin = Math.min(v, state.softMax);
+      normalizeSoftnessRange(state);
+      syncSoftnessRangeUI();
+      updateEmbedCode();
+    });
+
+    maxEl.addEventListener("input", () => {
+      const v = parseFloat(maxEl.value);
+      state.softMax = Math.max(v, state.softMin);
+      normalizeSoftnessRange(state);
+      syncSoftnessRangeUI();
+      updateEmbedCode();
+    });
+  }
+
   if (panel && panelToggle && panelBody) {
     panelToggle.addEventListener("click", () => {
       const isHidden = panel.classList.toggle("is-hidden");
@@ -557,20 +626,18 @@ function main() {
   }
 
   bindIntSlider("blobCount", "blobCountValue", "blobCount");
+  bindSelect("motionMode", "motionMode", normalizeMotionMode);
   bindSlider("grain", "grainValue", "grain", (v) => v.toFixed(2));
   bindSlider("distAmount", "distAmountValue", "distAmount", (v) => v.toFixed(2));
   bindSlider("distScale", "distScaleValue", "distScale", (v) => v.toFixed(2));
   bindSlider("distSpeed", "distSpeedValue", "distSpeed", (v) => v.toFixed(2));
-  bindSlider("globalSoftness", "globalSoftnessValue", "globalSoftness", (v) => v.toFixed(2));
-  bindSlider("softVar", "softVarValue", "softVar", (v) => v.toFixed(2));
-  bindSlider("edgeBlurMin", "edgeBlurMinValue", "edgeBlurMin", (v) => v.toFixed(2));
-  bindSlider("edgeBlurMax", "edgeBlurMaxValue", "edgeBlurMax", (v) => v.toFixed(2));
-  bindSlider("edgeBlurSpeed", "edgeBlurSpeedValue", "edgeBlurSpeed", (v) => v.toFixed(2));
+  bindSlider("zoom", "zoomValue", "zoom", (v) => v.toFixed(2));
+  bindSlider("blobScale", "blobScaleValue", "blobScale", (v) => v.toFixed(2));
+  bindSoftnessRange();
 
   const blobControlsEl = $("blobControls");
   const bgColorEl = $("bgColor");
   const bgSwatchesEl = $("bgSwatches");
-  const edgeBlurRandomizeBtn = $("edgeBlurRandomize");
 
   function buildSwatches(container, onPick) {
     if (!container) return;
@@ -674,15 +741,15 @@ function main() {
       savedAt: Date.now(),
       state: {
         blobCount: n,
+        motionMode: state.motionMode,
         grain: state.grain,
         distAmount: state.distAmount,
         distScale: state.distScale,
         distSpeed: state.distSpeed,
-        globalSoftness: state.globalSoftness,
-        softVar: state.softVar,
-        edgeBlurMin: state.edgeBlurMin,
-        edgeBlurMax: state.edgeBlurMax,
-        edgeBlurSpeed: state.edgeBlurSpeed,
+        zoom: state.zoom,
+        blobScale: state.blobScale,
+        softMin: state.softMin,
+        softMax: state.softMax,
       },
       colors: {
         background: state.bgColor,
@@ -741,8 +808,8 @@ function main() {
       `    root.innerHTML="";\n` +
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35};\n` +
-      `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
+      `    var state={blobCount:3,motionMode:"animate",grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,zoom:1.0,blobScale:1.0,softMin:0.85,softMax:1.15};\n` +
+      `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}if(typeof PRESET.state.scale==="number"){state.zoom=PRESET.state.scale;state.blobScale=PRESET.state.scale;}if(typeof PRESET.state.motionMode==="string") state.motionMode=PRESET.state.motionMode==="cursor"?"cursor":"animate";}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
       `    if(PRESET && Array.isArray(PRESET.blobs)){for(var bi=0;bi<Math.min(state.blobCount,PRESET.blobs.length);bi++){var pb=PRESET.blobs[bi];if(pb){for(var kk in pb){if(typeof pb[kk]==="number") blobs[bi][kk]=pb[kk];}if(typeof pb.color==="string") blobs[bi].color=pb.color;}}}\n` +
@@ -753,15 +820,15 @@ function main() {
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
       `    function fragSrc(prec){return prec+'\\n'+\n` +
-      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_softMin;uniform float u_softMax;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
       `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
       `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
       `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
-      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float seed01=clamp(u_blobSoftSeed[i]*0.5+0.5,0.0,1.0);float mix01=clamp(u_edgeBlurMix*0.65+seed01*0.35,0.0,1.0);float blur01=mix(u_edgeBlurMin,u_edgeBlurMax,mix01);w=pow(w,1.0/(1.0+blur01*2.0));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
+      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float seed01=clamp(u_blobSoftSeed[i]*0.5+0.5,0.0,1.0);float soft=mix(min(u_softMin,u_softMax),max(u_softMin,u_softMax),seed01);float feather=clamp(soft*0.5,0.0,1.0);float edgeWidth=max(r*mix(0.004,0.42,feather),0.0009);float inner=max(0.0,r-edgeWidth);float outer=r+edgeWidth;float w=1.0-smoothstep(inner,outer,dist);float edgeExponent=mix(1.14,0.92,feather);w=pow(clamp(w,0.0,1.0),edgeExponent);float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uSMin=gl.getUniformLocation(prog,'u_softMin');var uSMax=gl.getUniformLocation(prog,'u_softMax');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
@@ -772,12 +839,11 @@ function main() {
       `    if(typeof ResizeObserver!=='undefined'){var ro=new ResizeObserver(function(){resize();});ro.observe(root);if(root.parentElement)ro.observe(root.parentElement);}else{window.addEventListener('resize',function(){resize();});}\n` +
       `    gl.disable(gl.DEPTH_TEST);gl.disable(gl.BLEND);\n` +
       `    var running=true,raf=0,t0=performance.now();\n` +
-      `    var edgeBlurMix=0.5,edgeBlurTarget=0.5,edgeBlurT0=0,edgeBlurNext=0;\n` +
-      `    function pickEdgeBlur(now){edgeBlurTarget=Math.random();edgeBlurT0=now;var s=clamp(state.edgeBlurSpeed||0,0,1);var interval=2.5+(1-s)*10.0;edgeBlurNext=now+interval*1000;}\n` +
+      `    var pointer={x:0.5,y:0.5,targetX:0.5,targetY:0.5};function setPointerTarget(clientX,clientY){var rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;pointer.targetX=clamp((clientX-rect.left)/rect.width,0,1);pointer.targetY=clamp((clientY-rect.top)/rect.height,0,1);}window.addEventListener('pointermove',function(ev){setPointerTarget(ev.clientX,ev.clientY);},{passive:true});window.addEventListener('touchmove',function(ev){var touch=ev.touches&&ev.touches[0];if(touch)setPointerTarget(touch.clientX,touch.clientY);},{passive:true});\n` +
       `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
       `    function start(){if(running)return;running=true;raf=requestAnimationFrame(frame);} \n` +
       `    document.addEventListener('visibilitychange',function(){if(document.hidden)stop();else start();});\n` +
-      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
+      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;var count=clamp(state.blobCount|0,1,MAX_BLOBS);var cursorMode=state.motionMode==="cursor";var shaderTime=cursorMode?0:t;var zoom=(typeof state.zoom==="number"&&isFinite(state.zoom))?state.zoom:1.0;var blobScale=(typeof state.blobScale==="number"&&isFinite(state.blobScale))?state.blobScale:1.0;var animatedPositionScale=zoom<=1?zoom:1+(zoom-1)*0.68;if(cursorMode){pointer.x+=(pointer.targetX-pointer.x)*0.16;pointer.y+=(pointer.targetY-pointer.y)*0.16;}for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var x,y,r;if(cursorMode){var ringCount=Math.max(1,count-1);var angle=i===0?0:((i-1)/ringCount)*Math.PI*2+b.phase;var distance=(i===0?0:0.05+Math.min(0.14,b.radius*0.55))*zoom;x=clamp(pointer.x+Math.cos(angle)*distance,-0.15,1.15);y=clamp(pointer.y+Math.sin(angle)*distance*0.72,-0.15,1.15);r=b.radius*blobScale;}else{var ph=b.phase;x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);r=b.radius*pulse;x=0.5+(x-0.5)*animatedPositionScale;y=0.5+(y-0.5)*animatedPositionScale;r*=blobScale;}var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}gl.uniform1f(uTime,shaderTime);gl.uniform1i(uCnt,count);gl.uniform1f(uGr,state.grain);gl.uniform1f(uSMin,state.softMin);gl.uniform1f(uSMax,state.softMax);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
@@ -801,7 +867,7 @@ function main() {
       `  html,body{height:100%;margin:0;}\n` +
       // VEV note: the embed block should define the height. Avoid hard min-height that can
       // produce “fixed height” behavior on responsive layouts.
-      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:0;overflow:hidden;background:${bg};isolation:isolate;}\n` +
+      `  #${instanceId}{position:relative;display:block;width:100%;height:100%;min-height:240px;overflow:hidden;background:${bg};isolation:isolate;}\n` +
       `  #${instanceId} canvas{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;}\n` +
       `  #${instanceId} .mbg-fallback{position:absolute;inset:12px;z-index:3;display:grid;place-items:center;text-align:center;color:rgba(255,255,255,.88);background:rgba(10,6,16,.35);border:1px solid rgba(255,255,255,.10);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:18px;}\n` +
       `</style>\n\n` +
@@ -824,8 +890,8 @@ function main() {
       `    var canvas=document.createElement("canvas");canvas.setAttribute("aria-hidden","true");root.appendChild(canvas);\n` +
       `    function $(sel){return root.querySelector(sel);}\n` +
       `    var renderScale=0.65, dprCap=1.5;\n` +
-      `    var state={blobCount:3,grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,globalSoftness:1.02,softVar:0.12,edgeBlurMin:0.0,edgeBlurMax:0.55,edgeBlurSpeed:0.35};\n` +
-      `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}}\n` +
+      `    var state={blobCount:3,motionMode:"animate",grain:0.18,distAmount:0.16,distScale:1.05,distSpeed:0.12,zoom:1.0,blobScale:1.0,softMin:0.85,softMax:1.15};\n` +
+      `    if(PRESET && PRESET.state){for(var k in PRESET.state){if(typeof PRESET.state[k]==="number") state[k]=PRESET.state[k];}if(typeof PRESET.state.scale==="number"){state.zoom=PRESET.state.scale;state.blobScale=PRESET.state.scale;}if(typeof PRESET.state.motionMode==="string") state.motionMode=PRESET.state.motionMode==="cursor"?"cursor":"animate";}\n` +
       `    state.blobCount=clamp(state.blobCount|0,1,MAX_BLOBS);\n` +
       `    var blobs=new Array(MAX_BLOBS);for(var i=0;i<MAX_BLOBS;i++) blobs[i]=createBlob(i);\n` +
       `    if(PRESET && Array.isArray(PRESET.blobs)){for(var bi=0;bi<Math.min(state.blobCount,PRESET.blobs.length);bi++){var pb=PRESET.blobs[bi];if(pb){for(var kk in pb){if(typeof pb[kk]==="number") blobs[bi][kk]=pb[kk];}if(typeof pb.color==="string") blobs[bi].color=pb.color;}}}\n` +
@@ -836,63 +902,42 @@ function main() {
       `    function link(vs,fs){var p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS)){var info=gl.getProgramInfoLog(p)||"Program link error.";gl.deleteProgram(p);throw new Error(info);}return p;}\n` +
       `    var VS='attribute vec2 a_position;varying vec2 v_uv;void main(){v_uv=a_position*0.5+0.5;gl_Position=vec4(a_position,0.0,1.0);}';\n` +
       `    function fragSrc(prec){return prec+'\\n'+\n` +
-      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_globalSoftness;uniform float u_softVar;uniform float u_edgeBlurMin;uniform float u_edgeBlurMax;uniform float u_edgeBlurMix;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
+      `      'varying vec2 v_uv;uniform vec2 u_resolution;uniform vec3 u_bgColor;uniform float u_time;uniform float u_distSpeed;uniform int u_blobCount;uniform float u_grain;uniform float u_softMin;uniform float u_softMax;uniform float u_distAmount;uniform float u_distScale;uniform vec4 u_blob[${MAX_BLOBS}];uniform vec3 u_blobColor[${MAX_BLOBS}];uniform float u_blobSoftSeed[${MAX_BLOBS}];'+\n` +
       `      'float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}'+\n` +
       `      'float valueNoise(vec2 p){vec2 i=floor(p);vec2 f=fract(p);float a=hash12(i);float b=hash12(i+vec2(1.0,0.0));float c=hash12(i+vec2(0.0,1.0));float d=hash12(i+vec2(1.0,1.0));vec2 u=f*f*(3.0-2.0*f);return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;}'+\n` +
       `      'float fbm(vec2 p){float v=0.0;float a=0.55;for(int i=0;i<3;i++){v+=a*valueNoise(p);p=p*2.02+11.7;a*=0.52;}return v;}'+\n` +
-      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float soft=clamp(u_globalSoftness+u_softVar*u_blobSoftSeed[i],0.35,2.2);float sigma=r*soft;float w=exp(-(dist*dist)/(2.0*sigma*sigma));float seed01=clamp(u_blobSoftSeed[i]*0.5+0.5,0.0,1.0);float mix01=clamp(u_edgeBlurMix*0.65+seed01*0.35,0.0,1.0);float blur01=mix(u_edgeBlurMin,u_edgeBlurMax,mix01);w=pow(w,1.0/(1.0+blur01*2.0));float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
+      `      'void main(){float aspect=u_resolution.x/max(1.0,u_resolution.y);vec2 p=v_uv-0.5;p.x*=aspect;float sc=max(0.0001,u_distScale);float t=u_time*u_distSpeed;vec2 dn=vec2(fbm(p*sc+vec2(0.0,0.0)+t*0.18),fbm(p*sc+vec2(17.3,9.1)-t*0.14));vec2 dvec=(dn-0.5)*(u_distAmount*0.22);vec2 pp=p+dvec;vec3 colorSum=vec3(0.0);float wSum=0.0;for(int i=0;i<${MAX_BLOBS};i++){float active=step(float(i),float(u_blobCount-1));vec2 c=u_blob[i].xy-0.5;c.x*=aspect;float localN=fbm((pp-c)*(sc*0.85)+u_blob[i].w*9.7+t*0.10);float warp=1.0+(localN-0.5)*(u_distAmount*0.35);float r=max(0.0001,u_blob[i].z);float dist=length(pp-c)*warp;float seed01=clamp(u_blobSoftSeed[i]*0.5+0.5,0.0,1.0);float soft=mix(min(u_softMin,u_softMax),max(u_softMin,u_softMax),seed01);float feather=clamp(soft*0.5,0.0,1.0);float edgeWidth=max(r*mix(0.004,0.42,feather),0.0009);float inner=max(0.0,r-edgeWidth);float outer=r+edgeWidth;float w=1.0-smoothstep(inner,outer,dist);float edgeExponent=mix(1.14,0.92,feather);w=pow(clamp(w,0.0,1.0),edgeExponent);float w2=w*w;colorSum+=u_blobColor[i]*(w2*active);wSum+=w2*active;}vec3 base=u_bgColor;vec3 blobCol=colorSum/max(1e-5,wSum);float coverage=1.0-exp(-wSum*1.25);coverage=clamp(coverage,0.0,1.0);float v=smoothstep(0.95,0.20,length(p));vec3 col=mix(base,blobCol,coverage);col*=mix(0.88,1.05,v);float g=hash12(gl_FragCoord.xy+vec2(u_time*0.05,0.0))-0.5;col+=g*(u_grain*0.075);gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);}';}\n` +
       `    var hp=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);var prec=(hp&&hp.precision>0)?'precision highp float;':'precision mediump float;';\n` +
       `    var vs=compile(gl.VERTEX_SHADER,VS);var fs=compile(gl.FRAGMENT_SHADER,fragSrc(prec));var prog=link(vs,fs);gl.deleteShader(vs);gl.deleteShader(fs);gl.useProgram(prog);\n` +
       `    var posLoc=gl.getAttribLocation(prog,'a_position');var vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);gl.enableVertexAttribArray(posLoc);gl.vertexAttribPointer(posLoc,2,gl.FLOAT,false,0,0);\n` +
-      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uGS=gl.getUniformLocation(prog,'u_globalSoftness');var uSV=gl.getUniformLocation(prog,'u_softVar');var uEBMin=gl.getUniformLocation(prog,'u_edgeBlurMin');var uEBMax=gl.getUniformLocation(prog,'u_edgeBlurMax');var uEBMix=gl.getUniformLocation(prog,'u_edgeBlurMix');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
+      `    var uRes=gl.getUniformLocation(prog,'u_resolution');var uBg=gl.getUniformLocation(prog,'u_bgColor');var uTime=gl.getUniformLocation(prog,'u_time');var uDSp=gl.getUniformLocation(prog,'u_distSpeed');var uCnt=gl.getUniformLocation(prog,'u_blobCount');var uGr=gl.getUniformLocation(prog,'u_grain');var uSMin=gl.getUniformLocation(prog,'u_softMin');var uSMax=gl.getUniformLocation(prog,'u_softMax');var uDA=gl.getUniformLocation(prog,'u_distAmount');var uDS=gl.getUniformLocation(prog,'u_distScale');var uBlob=gl.getUniformLocation(prog,'u_blob[0]');var uCol=gl.getUniformLocation(prog,'u_blobColor[0]');var uSoft=gl.getUniformLocation(prog,'u_blobSoftSeed[0]');\n` +
       `    var blobVec4=new Float32Array(MAX_BLOBS*4);var blobColor=new Float32Array(MAX_BLOBS*3);var blobSoftSeed=new Float32Array(MAX_BLOBS);\n` +
       `    for(var jj=0;jj<MAX_BLOBS;jj++){var rgb=hexToRgb01(blobs[jj].color);blobColor[jj*3]=rgb[0];blobColor[jj*3+1]=rgb[1];blobColor[jj*3+2]=rgb[2];blobSoftSeed[jj]=blobs[jj].softnessSeed;}\n` +
       `    gl.uniform3fv(uCol,blobColor);gl.uniform1fv(uSoft,blobSoftSeed);\n` +
       `    var bgHex=(PRESET&&PRESET.colors&&typeof PRESET.colors.background==='string')?PRESET.colors.background:${JSON.stringify(bg)};var bg01=hexToRgb01(bgHex);gl.uniform3f(uBg,bg01[0],bg01[1],bg01[2]);\n` +
       `    gl.uniform1f(uDSp,(typeof state.distSpeed==='number'&&isFinite(state.distSpeed))?state.distSpeed:0.12);\n` +
+      `    var size={w:0,h:0};function addRect(rect){if(!rect)return;size.w=Math.max(size.w,rect.width||0);size.h=Math.max(size.h,rect.height||0);}\n` +
       `    function measureSize(){\n` +
-      `      // VEV "Embed Anything" commonly runs inside an iframe. The most reliable size source\n` +
-      `      // is the iframe element itself (frameElement) and its parent wrapper.\n` +
-      `      var w=0,h=0;\n` +
+      `      // VEV can report sizes late, so gather from several likely containers and keep a sane minimum.\n` +
+      `      size={w:0,h:0};\n` +
+      `      addRect(root.getBoundingClientRect());\n` +
+      `      if(root.parentElement) addRect(root.parentElement.getBoundingClientRect());\n` +
       `      try{\n` +
       `        var fe=window.frameElement;\n` +
       `        if(fe){\n` +
-      `          // Make iframe behave like a full-bleed block.\n` +
       `          fe.style.display='block';\n` +
       `          fe.style.width='100%';\n` +
       `          fe.style.border='0';\n` +
-      `          // If we can see the parent wrapper, sync iframe height to it.\n` +
-      `          if(fe.parentElement){\n` +
-      `            var pr=fe.parentElement.getBoundingClientRect();\n` +
-      `            if(pr && pr.height>2){\n` +
-      `              fe.style.height=Math.floor(pr.height)+'px';\n` +
-      `              w=pr.width||0; h=pr.height||0;\n` +
-      `            }\n` +
-      `          }\n` +
-      `          // Fall back to iframe rect.\n` +
-      `          if(h<2){\n` +
-      `            var fr=fe.getBoundingClientRect();\n` +
-      `            w=Math.max(w,fr.width||0);\n` +
-      `            h=Math.max(h,fr.height||0);\n` +
-      `          }\n` +
+      `          addRect(fe.getBoundingClientRect());\n` +
+      `          if(fe.parentElement) addRect(fe.parentElement.getBoundingClientRect());\n` +
+      `          if(fe.parentElement && fe.parentElement.parentElement) addRect(fe.parentElement.parentElement.getBoundingClientRect());\n` +
       `        }\n` +
       `      }catch(e){}\n` +
-      `      // Fall back to root rect (non-iframe embeds).\n` +
-      `      if(h<2){\n` +
-      `        var r=root.getBoundingClientRect();\n` +
-      `        w=Math.max(w,r.width||0,root.clientWidth||0);\n` +
-      `        h=Math.max(h,r.height||0,root.clientHeight||0);\n` +
-      `      }\n` +
-      `      // Last resort: iframe viewport (still better than a fixed 200px).\n` +
-      `      if(h<2){\n` +
-      `        w=Math.max(w,window.innerWidth||0);\n` +
-      `        h=Math.max(h,window.innerHeight||0);\n` +
-      `      }\n` +
-      `      if(w<2) w=2;\n` +
-      `      if(h<2) h=2;\n` +
-      `      // Ensure root fills the embed block.\n` +
-      `      root.style.height=Math.floor(h)+'px';\n` +
-      `      return {w:w,h:h};\n` +
+      `      if(size.w<2) size.w=Math.max(size.w,window.innerWidth||0,root.clientWidth||0,2);\n` +
+      `      if(size.h<180) size.h=Math.max(size.h,root.clientHeight||0,window.innerHeight||0,240);\n` +
+      `      root.style.minHeight='240px';\n` +
+      `      root.style.height=Math.max(240,Math.floor(size.h))+'px';\n` +
+      `      return {w:Math.max(2,size.w),h:Math.max(240,size.h)};\n` +
       `    }\n` +
       `    var lastW=0,lastH=0;function resize(){\n` +
       `      var m=measureSize();\n` +
@@ -907,7 +952,7 @@ function main() {
       `      gl.viewport(0,0,w,h);\n` +
       `      gl.uniform2f(uRes,w,h);\n` +
       `    }\n` +
-      `    resize();\n` +
+      `    resize();setTimeout(resize,60);setTimeout(resize,220);setTimeout(resize,800);\n` +
       `    if(typeof ResizeObserver!=='undefined'){\n` +
       `      var ro=new ResizeObserver(function(){resize();});\n` +
       `      ro.observe(root);\n` +
@@ -918,16 +963,15 @@ function main() {
       `` +
       `    gl.disable(gl.DEPTH_TEST);gl.disable(gl.BLEND);\n` +
       `    var running=true,raf=0,t0=performance.now();\n` +
-      `    var edgeBlurMix=0.5,edgeBlurTarget=0.5,edgeBlurT0=0,edgeBlurNext=0;\n` +
-      `    function pickEdgeBlur(now){edgeBlurTarget=Math.random();edgeBlurT0=now;var s=clamp(state.edgeBlurSpeed||0,0,1);var interval=2.5+(1-s)*10.0;edgeBlurNext=now+interval*1000;}\n` +
+      `    var pointer={x:0.5,y:0.5,targetX:0.5,targetY:0.5};function setPointerTarget(clientX,clientY){var rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;pointer.targetX=clamp((clientX-rect.left)/rect.width,0,1);pointer.targetY=clamp((clientY-rect.top)/rect.height,0,1);}window.addEventListener('pointermove',function(ev){setPointerTarget(ev.clientX,ev.clientY);},{passive:true});window.addEventListener('touchmove',function(ev){var touch=ev.touches&&ev.touches[0];if(touch)setPointerTarget(touch.clientX,touch.clientY);},{passive:true});\n` +
       `    function stop(){running=false;if(raf)cancelAnimationFrame(raf);raf=0;}\n` +
       `    function start(){if(running)return;running=true;raf=requestAnimationFrame(frame);} \n` +
       `    document.addEventListener('visibilitychange',function(){if(document.hidden)stop();else start();});\n` +
-      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var ph=b.phase;var x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);var y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);var r=b.radius*pulse;var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}if((state.edgeBlurSpeed||0)>0.001){if(edgeBlurNext===0)pickEdgeBlur(now);if(now>=edgeBlurNext)pickEdgeBlur(now);var s=clamp(state.edgeBlurSpeed||0,0,1);var dur=700+(1-s)*1200;var u=clamp((now-edgeBlurT0)/dur,0,1);var e=u*u*(3-2*u);edgeBlurMix=edgeBlurMix+(edgeBlurTarget-edgeBlurMix)*e;}gl.uniform1f(uTime,t);gl.uniform1i(uCnt,clamp(state.blobCount|0,1,MAX_BLOBS));gl.uniform1f(uGr,state.grain);gl.uniform1f(uGS,state.globalSoftness);gl.uniform1f(uSV,state.softVar);gl.uniform1f(uEBMin,clamp(state.edgeBlurMin||0,0,1));gl.uniform1f(uEBMax,clamp(state.edgeBlurMax||0,0,1));gl.uniform1f(uEBMix,edgeBlurMix);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
+      `    function frame(now){if(!running)return;raf=requestAnimationFrame(frame);resize();var t=(now-t0)*0.001;var count=clamp(state.blobCount|0,1,MAX_BLOBS);var cursorMode=state.motionMode==="cursor";var shaderTime=cursorMode?0:t;var zoom=(typeof state.zoom==="number"&&isFinite(state.zoom))?state.zoom:1.0;var blobScale=(typeof state.blobScale==="number"&&isFinite(state.blobScale))?state.blobScale:1.0;var animatedPositionScale=zoom<=1?zoom:1+(zoom-1)*0.68;if(cursorMode){pointer.x+=(pointer.targetX-pointer.x)*0.16;pointer.y+=(pointer.targetY-pointer.y)*0.16;}for(var i=0;i<MAX_BLOBS;i++){var b=blobs[i];var x,y,r;if(cursorMode){var ringCount=Math.max(1,count-1);var angle=i===0?0:((i-1)/ringCount)*Math.PI*2+b.phase;var distance=(i===0?0:0.05+Math.min(0.14,b.radius*0.55))*zoom;x=clamp(pointer.x+Math.cos(angle)*distance,-0.15,1.15);y=clamp(pointer.y+Math.sin(angle)*distance*0.72,-0.15,1.15);r=b.radius*blobScale;}else{var ph=b.phase;x=b.baseX+b.moveAmpX*Math.sin(t*b.moveFreqX*Math.PI*2+ph)+0.02*Math.sin(t*0.10+b.distortionSeed*6.28);y=b.baseY+b.moveAmpY*Math.cos(t*b.moveFreqY*Math.PI*2+ph*0.91)+0.02*Math.cos(t*0.08+b.distortionSeed*6.28);var pulse=1+b.pulseAmp*Math.sin(t*b.pulseFreq*Math.PI*2+ph*1.7);r=b.radius*pulse;x=0.5+(x-0.5)*animatedPositionScale;y=0.5+(y-0.5)*animatedPositionScale;r*=blobScale;}var o=i*4;blobVec4[o]=x;blobVec4[o+1]=y;blobVec4[o+2]=r;blobVec4[o+3]=b.distortionSeed;}gl.uniform1f(uTime,shaderTime);gl.uniform1i(uCnt,count);gl.uniform1f(uGr,state.grain);gl.uniform1f(uSMin,state.softMin);gl.uniform1f(uSMax,state.softMax);gl.uniform1f(uDA,state.distAmount);gl.uniform1f(uDS,state.distScale);gl.uniform4fv(uBlob,blobVec4);gl.drawArrays(gl.TRIANGLES,0,6);} \n` +
       `    raf=requestAnimationFrame(frame);\n` +
       `  }\n` +
       `  var root=document.getElementById(ROOT_ID);\n` +
-      `  if(root) init(root);\n` +
+      `  if(root){try{init(root);}catch(err){console.error('Metaball VEV embed failed',err);var fb=document.createElement('div');fb.className='mbg-fallback';fb.textContent='Embed failed to initialize. Check the console for details.';root.innerHTML='';root.appendChild(fb);}}\n` +
       `})();\n` +
       `</script>\n`
     );
@@ -1012,17 +1056,32 @@ function main() {
     const s = cfg.state && typeof cfg.state === "object" ? cfg.state : null;
     const n = s && typeof s.blobCount === "number" ? clamp(s.blobCount | 0, 1, MAX_BLOBS) : null;
     if (s) {
+      if (typeof s.motionMode === "string") state.motionMode = normalizeMotionMode(s.motionMode);
       if (typeof s.grain === "number") state.grain = s.grain;
       if (typeof s.distAmount === "number") state.distAmount = s.distAmount;
       if (typeof s.distScale === "number") state.distScale = s.distScale;
       if (typeof s.distSpeed === "number") state.distSpeed = s.distSpeed;
-      if (typeof s.globalSoftness === "number") state.globalSoftness = s.globalSoftness;
-      if (typeof s.softVar === "number") state.softVar = s.softVar;
-      if (typeof s.edgeBlurMin === "number") state.edgeBlurMin = s.edgeBlurMin;
-      if (typeof s.edgeBlurMax === "number") state.edgeBlurMax = s.edgeBlurMax;
-      if (typeof s.edgeBlurSpeed === "number") state.edgeBlurSpeed = s.edgeBlurSpeed;
+      if (typeof s.zoom === "number") state.zoom = s.zoom;
+      if (typeof s.blobScale === "number") state.blobScale = s.blobScale;
+      if (typeof s.scale === "number") {
+        state.zoom = s.scale;
+        state.blobScale = s.scale;
+      }
+      if (typeof s.softMin === "number") state.softMin = s.softMin;
+      if (typeof s.softMax === "number") state.softMax = s.softMax;
+      if (
+        typeof s.softMin !== "number" &&
+        typeof s.softMax !== "number" &&
+        typeof s.globalSoftness === "number"
+      ) {
+        const center = clamp(s.globalSoftness, 0, 2);
+        const spread = typeof s.softVar === "number" ? Math.max(0, s.softVar) : 0;
+        state.softMin = clamp(center - spread, 0, 2);
+        state.softMax = clamp(center + spread, 0, 2);
+      }
       if (n != null) state.blobCount = n;
     }
+    normalizeSoftnessRange(state);
 
     if (cfg.colors && typeof cfg.colors === "object") {
       if (typeof cfg.colors.background === "string") setBgColor(cfg.colors.background);
@@ -1074,6 +1133,7 @@ function main() {
     };
     setOut("blobCount", String(state.blobCount));
     setOut("blobCountValue", String(state.blobCount));
+    setOut("motionMode", state.motionMode);
     setOut("grain", String(state.grain));
     setOut("grainValue", state.grain.toFixed(2));
     setOut("distAmount", String(state.distAmount));
@@ -1082,18 +1142,13 @@ function main() {
     setOut("distScaleValue", state.distScale.toFixed(2));
     setOut("distSpeed", String(state.distSpeed));
     setOut("distSpeedValue", state.distSpeed.toFixed(2));
-    setOut("globalSoftness", String(state.globalSoftness));
-    setOut("globalSoftnessValue", state.globalSoftness.toFixed(2));
-    setOut("softVar", String(state.softVar));
-    setOut("softVarValue", state.softVar.toFixed(2));
-    setOut("edgeBlurMin", String(state.edgeBlurMin));
-    setOut("edgeBlurMinValue", state.edgeBlurMin.toFixed(2));
-    setOut("edgeBlurMax", String(state.edgeBlurMax));
-    setOut("edgeBlurMaxValue", state.edgeBlurMax.toFixed(2));
-    setOut("edgeBlurSpeed", String(state.edgeBlurSpeed));
-    setOut("edgeBlurSpeedValue", state.edgeBlurSpeed.toFixed(2));
+    setOut("zoom", String(state.zoom));
+    setOut("zoomValue", state.zoom.toFixed(2));
+    setOut("blobScale", String(state.blobScale));
+    setOut("blobScaleValue", state.blobScale.toFixed(2));
     const bgInput = $("bgColor");
     if (bgInput) bgInput.value = state.bgColor;
+    syncSoftnessRangeUI();
 
     rebuildBlobControls();
     updateEmbedCode();
@@ -1179,31 +1234,46 @@ function main() {
   gl.disable(gl.DEPTH_TEST);
   gl.disable(gl.BLEND);
 
-  // Edge blur randomization (smooth, non-jittery).
-  let edgeBlurMix = 0.5; // 0..1
-  let edgeBlurTarget = 0.5;
-  let edgeBlurTweenT0 = 0;
-  let edgeBlurNextPick = 0;
+  const pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5 };
 
-  function pickEdgeBlurTarget(now) {
-    edgeBlurTarget = Math.random();
-    edgeBlurTweenT0 = now;
-    // Next pick interval based on speed slider (0 => never).
-    const s = clamp(state.edgeBlurSpeed, 0, 1);
-    const interval = 2.5 + (1 - s) * 10.0; // seconds
-    edgeBlurNextPick = now + interval * 1000;
+  function setPointerTarget(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    pointer.targetX = clamp((clientX - rect.left) / rect.width, 0, 1);
+    pointer.targetY = clamp((clientY - rect.top) / rect.height, 0, 1);
   }
 
-  if (edgeBlurRandomizeBtn) {
-    edgeBlurRandomizeBtn.addEventListener("click", () => {
-      pickEdgeBlurTarget(performance.now());
-      updateEmbedCode();
-    });
+  function getCursorOffset(i, count) {
+    if (count <= 1 || i === 0) return { x: 0, y: 0 };
+    const ringCount = Math.max(1, count - 1);
+    const angle = (((i - 1) / ringCount) * Math.PI * 2) + blobs[i].phase;
+    const distance = 0.05 + Math.min(0.14, blobs[i].radius * 0.55);
+    return {
+      x: Math.cos(angle) * distance,
+      y: Math.sin(angle) * distance * 0.72,
+    };
   }
 
   let running = true;
   let rafId = 0;
   const t0 = performance.now();
+
+  window.addEventListener(
+    "pointermove",
+    (event) => {
+      setPointerTarget(event.clientX, event.clientY);
+    },
+    { passive: true }
+  );
+
+  window.addEventListener(
+    "touchmove",
+    (event) => {
+      const touch = event.touches && event.touches[0];
+      if (touch) setPointerTarget(touch.clientX, touch.clientY);
+    },
+    { passive: true }
+  );
 
   function frame(now) {
     if (!running) return;
@@ -1212,35 +1282,47 @@ function main() {
     resizeIfNeeded();
 
     const t = ((now - t0) * 0.001) * CONFIG.timeScale;
-
-    // Update edge blur mix (smoothly approaches a random target).
-    if (state.edgeBlurSpeed > 0.001) {
-      if (edgeBlurNextPick === 0) pickEdgeBlurTarget(now);
-      if (now >= edgeBlurNextPick) pickEdgeBlurTarget(now);
-      const s = clamp(state.edgeBlurSpeed, 0, 1);
-      const dur = 700 + (1 - s) * 1200; // ms
-      const u = clamp((now - edgeBlurTweenT0) / dur, 0, 1);
-      const ease = u * u * (3 - 2 * u);
-      edgeBlurMix = edgeBlurMix + (edgeBlurTarget - edgeBlurMix) * ease;
-    }
+    const n = clamp(state.blobCount | 0, 1, MAX_BLOBS);
+    const isCursorMode = state.motionMode === "cursor";
+    const shaderTime = isCursorMode ? 0 : t;
+    const zoom = clamp(state.zoom, 0.5, 3);
+    const blobScale = clamp(state.blobScale, 0.5, 4);
+    const animatedPositionScale = zoom <= 1 ? zoom : 1 + (zoom - 1) * 0.68;
 
     // Update u_blob array (positions + animated radius). Avoid allocations.
-    const n = state.blobCount | 0;
+    if (isCursorMode) {
+      pointer.x += (pointer.targetX - pointer.x) * 0.16;
+      pointer.y += (pointer.targetY - pointer.y) * 0.16;
+    }
+
     for (let i = 0; i < MAX_BLOBS; i++) {
       const b = blobs[i];
+      let x;
+      let y;
+      let r;
 
-      const phase = b.phase;
-      const x =
-        b.baseX +
-        b.moveAmpX * Math.sin((t * b.moveFreqX) * Math.PI * 2 + phase) +
-        0.02 * Math.sin(t * 0.10 + b.distortionSeed * 6.28);
-      const y =
-        b.baseY +
-        b.moveAmpY * Math.cos((t * b.moveFreqY) * Math.PI * 2 + phase * 0.91) +
-        0.02 * Math.cos(t * 0.08 + b.distortionSeed * 6.28);
+      if (isCursorMode) {
+        const offset = getCursorOffset(i, n);
+        x = clamp(pointer.x + offset.x * zoom, -0.15, 1.15);
+        y = clamp(pointer.y + offset.y * zoom, -0.15, 1.15);
+        r = b.radius * blobScale;
+      } else {
+        const phase = b.phase;
+        x =
+          b.baseX +
+          b.moveAmpX * Math.sin((t * b.moveFreqX) * Math.PI * 2 + phase) +
+          0.02 * Math.sin(t * 0.10 + b.distortionSeed * 6.28);
+        y =
+          b.baseY +
+          b.moveAmpY * Math.cos((t * b.moveFreqY) * Math.PI * 2 + phase * 0.91) +
+          0.02 * Math.cos(t * 0.08 + b.distortionSeed * 6.28);
 
-      const pulse = 1 + b.pulseAmp * Math.sin((t * b.pulseFreq) * Math.PI * 2 + phase * 1.7);
-      const r = b.radius * pulse;
+        const pulse = 1 + b.pulseAmp * Math.sin((t * b.pulseFreq) * Math.PI * 2 + phase * 1.7);
+        r = b.radius * pulse;
+        x = 0.5 + (x - 0.5) * animatedPositionScale;
+        y = 0.5 + (y - 0.5) * animatedPositionScale;
+        r *= blobScale;
+      }
 
       const o = i * 4;
       blobVec4[o + 0] = x;
@@ -1249,14 +1331,11 @@ function main() {
       blobVec4[o + 3] = b.distortionSeed;
     }
 
-    gl.uniform1f(uTime, t);
+    gl.uniform1f(uTime, shaderTime);
     gl.uniform1i(uBlobCount, n);
     gl.uniform1f(uGrain, state.grain);
-    gl.uniform1f(uGlobalSoftness, state.globalSoftness);
-    gl.uniform1f(uSoftVar, state.softVar);
-    gl.uniform1f(uEdgeBlurMin, state.edgeBlurMin);
-    gl.uniform1f(uEdgeBlurMax, state.edgeBlurMax);
-    gl.uniform1f(uEdgeBlurMix, edgeBlurMix);
+    gl.uniform1f(uSoftMin, state.softMin);
+    gl.uniform1f(uSoftMax, state.softMax);
     gl.uniform1f(uDistAmount, state.distAmount);
     gl.uniform1f(uDistScale, state.distScale);
     gl.uniform1f(uDistSpeed, state.distSpeed);
