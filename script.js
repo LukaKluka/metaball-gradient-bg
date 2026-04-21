@@ -637,7 +637,19 @@ function main() {
 
   const blobControlsEl = $("blobControls");
   const bgColorEl = $("bgColor");
+  const bgColorCopyBtn = $("bgColorCopy");
   const bgSwatchesEl = $("bgSwatches");
+
+  function normalizeHexColor(hex) {
+    return String(hex || "").trim().toUpperCase();
+  }
+
+  function bindColorCopyButton(btn, getHex) {
+    if (!btn || typeof getHex !== "function") return;
+    btn.addEventListener("click", async () => {
+      await copyText(btn, normalizeHexColor(getHex()));
+    });
+  }
 
   function buildSwatches(container, onPick) {
     if (!container) return;
@@ -700,13 +712,24 @@ function main() {
       label.className = "blob__label";
       label.textContent = `Blob ${i + 1}`;
 
+      const actions = document.createElement("div");
+      actions.className = "blob__actions";
+
       const color = document.createElement("input");
       color.type = "color";
       color.value = blobs[i].color;
       color.addEventListener("input", () => setBlobColor(i, color.value));
 
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "btn btn--ghost blob__copy";
+      copyBtn.textContent = "Copy HEX";
+      bindColorCopyButton(copyBtn, () => color.value);
+
+      actions.appendChild(color);
+      actions.appendChild(copyBtn);
       head.appendChild(label);
-      head.appendChild(color);
+      head.appendChild(actions);
       wrap.appendChild(head);
       wrap.appendChild(buildSwatchesRow(i, color));
 
@@ -719,6 +742,7 @@ function main() {
     bgColorEl.value = state.bgColor;
     bgColorEl.addEventListener("input", () => setBgColor(bgColorEl.value));
   }
+  bindColorCopyButton(bgColorCopyBtn, () => (bgColorEl ? bgColorEl.value : state.bgColor));
   buildSwatches(bgSwatchesEl, (hex) => {
     if (bgColorEl) bgColorEl.value = hex;
     setBgColor(hex);
@@ -993,17 +1017,25 @@ function main() {
   }
 
   async function copyText(btn, text) {
+    const prev = btn ? btn.textContent : "";
     try {
       await navigator.clipboard.writeText(text);
-      const prev = btn.textContent;
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "true");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      ta.style.pointerEvents = "none";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    if (btn) {
       btn.textContent = "Copied";
       setTimeout(() => (btn.textContent = prev), 900);
-    } catch {
-      if (embedCodeEl) {
-        embedCodeEl.focus();
-        embedCodeEl.select();
-      }
-      document.execCommand("copy");
     }
   }
 
